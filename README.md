@@ -130,22 +130,9 @@ Weekly Ending Inventory (bars)
 
 
 
-
+Future additions:
+- Get financial metrics by channel
+- Use shopify api for ease of pipeline
+- Sales rate per week of bars (not included samples and internal purchases)
 Table 2 Online Store Weekly Financials
-How: (orders csv file → source → web)
-(Later Can use shopify API for simplicity of automation)
-
-
-
-
-
-
-
-
-
-GM by channel
-NET profit by channel 
-Current inventory
-Sales rate/week (forecast over time to see when we would run out based on this current sales rate. This will allow us to strategize whether we want to try to sell product faster and explore other channels or whether we should conserve product)
-Just want to get a sense for current inventory + the rate of boxes sold per week
 
