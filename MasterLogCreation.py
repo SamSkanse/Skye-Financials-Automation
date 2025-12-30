@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import pandas as pd
 import numpy as np
+import re
 from pathlib import Path
 
 # ---- CONSTANTS ----
@@ -23,7 +24,7 @@ def classify_shopify_item(price):
         return None
     if p > 20:
         return "box"
-    elif p < 5:
+    elif p < 6.5:
         return "bar"
     else:
         return None
@@ -91,13 +92,105 @@ def compute_total_shipping(row):
     # Otherwise, sum the non-NaN pieces
     return sum(v for v in vals if pd.notna(v))
 
+# ---- Outputs only Order log without 3pl (used for testing) ----
+
+def orders_log_from_csv(orders_file, output_path=None):
+    """
+    Build an orders-only log from a Shopify orders CSV.
+
+    Parameters
+    - orders_file: path to the Shopify orders CSV
+    - output_path: optional path to write the CSV output
+
+    Returns a `pandas.DataFrame` with the same columns as the Shopify portion
+    of `build_master_log` (order_ID, order_date, email, box_or_bar, source,
+    line_item_quantity, total_bars_sold, line_item_price, subtotal, discount,
+    shipping, tax, total, bar_cogs, total_shipping_cost).
+    """
+    orders = pd.read_csv(orders_file)
+
+    shopify = orders.copy()
+
+    shopify["line_item_quantity"] = pd.to_numeric(
+        shopify.get("Lineitem quantity"), errors="coerce"
+    )
+    shopify["line_item_price"] = pd.to_numeric(
+        shopify.get("Lineitem price"), errors="coerce"
+    )
+
+    shopify["box_or_bar"] = shopify["line_item_price"].apply(classify_shopify_item)
+    shopify["total_bars_sold"] = shopify.apply(
+        lambda r: compute_bars_sold(r["box_or_bar"], r["line_item_quantity"]),
+        axis=1,
+    )
+    shopify["bar_cogs"] = shopify.apply(
+        lambda r: compute_bar_cogs(r["box_or_bar"], r["line_item_quantity"]),
+        axis=1,
+    )
+
+    # No 3PL merge here, so total_shipping_cost is blank (NaN)
+    shopify_rows = pd.DataFrame(
+        {
+            "order_ID": shopify.get("Name"),
+            "order_date": shopify.get("Paid at"),
+            "email": shopify.get("Email"),
+            "box_or_bar": shopify["box_or_bar"],
+            "source": shopify.get("Source"),
+            "line_item_quantity": shopify["line_item_quantity"],
+            "total_bars_sold": shopify["total_bars_sold"],
+            "line_item_price": shopify["line_item_price"],
+            # Order Financials
+            "subtotal": pd.to_numeric(shopify.get("Subtotal"), errors="coerce"),
+            "discount": pd.to_numeric(shopify.get("Discount Amount"), errors="coerce"),
+            "shipping": pd.to_numeric(shopify.get("Shipping"), errors="coerce"),
+            "tax": pd.to_numeric(shopify.get("Taxes"), errors="coerce"),
+            "total": pd.to_numeric(shopify.get("Total"), errors="coerce"),
+            # Costs
+            "bar_cogs": shopify["bar_cogs"],
+            "total_shipping_cost": np.nan,
+        }
+    )
+
+    if output_path:
+        out_path = Path(output_path)
+        suffix = out_path.suffix.lower()
+
+        # If user asked for an Excel file, write with to_excel (requires openpyxl)
+        if suffix in (".xlsx", ".xls"):
+            try:
+                shopify_rows.to_excel(output_path, index=False)
+                print(f"Orders-only Excel log written to: {output_path}")
+            except ImportError:
+                raise ImportError(
+                    "Writing Excel files requires 'openpyxl' (pip install openpyxl)."
+                )
+        else:
+            # Default to CSV for .csv or unknown extensions
+            shopify_rows.to_csv(output_path, index=False)
+            print(f"Orders-only CSV log written to: {output_path}")
+
+    return shopify_rows
+
 
 # ---- CORE LOGIC ----
 
-def build_master_log(orders_path, threepl_path, output_path):
-    # Read inputs
-    orders = pd.read_csv(orders_path)
-    threepl = pd.read_excel(threepl_path)
+def build_master_log(orders_path, threepl_path, output_path=None):
+    """
+    Build the full master log from orders CSV and 3PL Excel.
+
+    Returns a pandas.DataFrame. If `output_path` is provided the CSV
+    will also be written to that path (backwards-compatible).
+    """
+    # Read inputs (accept either DataFrame or path)
+    if isinstance(orders_path, pd.DataFrame):
+        orders = orders_path.copy()
+    else:
+        orders = pd.read_csv(orders_path)
+
+    if isinstance(threepl_path, pd.DataFrame):
+        threepl = threepl_path.copy()
+    else:
+        threepl = pd.read_excel(threepl_path)
 
     # Only care about shipment rows in 3PL sheet
     shipments = threepl[threepl["Type"] == "Shipment Order"].copy()
@@ -180,6 +273,19 @@ def build_master_log(orders_path, threepl_path, output_path):
     )
     samples["total_shipping_cost"] = samples.apply(compute_total_shipping, axis=1)
 
+    # --- Detect sales-team / GTM shipments in 3PL samples ---
+    # If the 3PL row has no Store Order Number and the Description mentions
+    # GTM or Sales team keywords, mark it as a sales_team item so it won't
+    # count toward sold inventory or financials.
+    desc_col = next((c for c in samples.columns if "description" in c.lower()), None)
+    if desc_col:
+        desc_series = samples[desc_col].fillna("").astype(str).str.lower()
+        keywords = ["gtm", "sales team", "sales_team", "gtm campaign", "marketing"]
+        pattern = "|".join(re.escape(k) for k in keywords)
+        samples["_is_sales_team"] = desc_series.str.contains(pattern)
+    else:
+        samples["_is_sales_team"] = False
+
     sample_rows = pd.DataFrame(
         {
             # For free samples, fill only what we can from 3PL
@@ -201,17 +307,67 @@ def build_master_log(orders_path, threepl_path, output_path):
         }
     )
 
+    # Post-process sales-team marked rows: override source/email and zero-out
+    # financial/quantity fields (but keep total_shipping_cost).
+    sales_idx = samples.index[samples["_is_sales_team"]]
+    if len(sales_idx) > 0:
+        # Mark source and email
+        sample_rows.loc[sales_idx, "source"] = "sales_team"
+        sample_rows.loc[sales_idx, "email"] = "SENT TO SALES TEAM"
+
+        # Exclude from inventory counts: zero total_bars_sold
+        if "total_bars_sold" in sample_rows.columns:
+            sample_rows.loc[sales_idx, "total_bars_sold"] = 0
+
+        # Zero-out financial columns to the right of quantity except shipping costs
+        zero_cols = [
+            "line_item_price",
+            "subtotal",
+            "discount",
+            "shipping",
+            "tax",
+            "total",
+            "bar_cogs",
+        ]
+        for col in zero_cols:
+            if col in sample_rows.columns:
+                sample_rows.loc[sales_idx, col] = 0
+
+    # Drop helper column
+    if "_is_sales_team" in samples.columns:
+        samples = samples.drop(columns=["_is_sales_team"])
+
     # ---- FINAL MASTER LOG ----
 
     master = pd.concat([merged_rows, sample_rows], ignore_index=True)
-    master.to_csv(output_path, index=False)
-    print(f"Master log written to: {output_path}")
+
+    if output_path:
+        out_path = Path(output_path)
+        suffix = out_path.suffix.lower()
+        # write CSV by default for .csv or unknown extensions
+        if suffix in (".xlsx", ".xls"):
+            try:
+                master.to_excel(output_path, index=False)
+                print(f"Master log Excel written to: {output_path}")
+            except ImportError:
+                raise ImportError(
+                    "Writing Excel files requires 'openpyxl' (pip install openpyxl)."
+                )
+        else:
+            master.to_csv(output_path, index=False)
+            print(f"Master log CSV written to: {output_path}")
+
+    return master
 
 
 if __name__ == "__main__":
     # Update these paths as needed
-    orders_file = "orders_export_1.csv"
-    threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
-    output_file = "master_log_all_orders.csv"
+    orders_file = "/Users/samskanse/desktop/orders_11-21_to_11-28.csv"
+    # threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
+    # output_file = "/Users/samskanse/desktop/order_log_11-21_to_11-28.csv"
 
-    build_master_log(orders_file, threepl_file, output_file)
+    # build_master_log(orders_file, threepl_file, output_file)
+    orders_log_from_csv(
+        orders_file,
+        output_path="/Users/samskanse/desktop/orders_only_log_11-21_to_11-28.xlsx",
+    )

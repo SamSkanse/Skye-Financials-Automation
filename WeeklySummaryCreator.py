@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
 def get_float_input(prompt, decimals=2):
     while True:
@@ -21,21 +22,34 @@ def get_int_input(prompt):
             print("Please enter a whole number (e.g. 10000).")
 
 def build_weekly_summary(
-    master_path,
-    threepl_path,
-    output_path,
+    master,
+    threepl,
+    output_path=None,
     payment_processing_fee=None,
     starting_inventory=None,
 ):
+    """
+    Build weekly summary. `master` and `threepl` may be file paths or DataFrames.
+
+    Returns a pandas.DataFrame (summary_df). If `output_path` is provided the
+    CSV/Excel will also be written.
+    """
     # ---- LOAD DATA ----
-    master = pd.read_csv(master_path)
-    threepl = pd.read_excel(threepl_path)
+    if isinstance(master, pd.DataFrame):
+        master_df = master.copy()
+    else:
+        master_df = pd.read_csv(master)
+
+    if isinstance(threepl, pd.DataFrame):
+        threepl_df = threepl.copy()
+    else:
+        threepl_df = pd.read_excel(threepl)
 
     # Ensure key numeric columns are numeric
     for col in ["total", "tax", "bar_cogs", "total_shipping_cost",
                 "line_item_quantity", "total_bars_sold"]:
-        if col in master.columns:
-            master[col] = pd.to_numeric(master[col], errors="coerce")
+        if col in master_df.columns:
+            master_df[col] = pd.to_numeric(master_df[col], errors="coerce")
 
     # ---- ASK USER INPUTS ----
     if payment_processing_fee is None:
@@ -48,40 +62,29 @@ def build_weekly_summary(
         starting_inventory = get_int_input(
             "Enter starting inventory (in bars, whole number): "
         )
+
     # ---- GROSS REVENUE & TAXES ----
-    # Gross Revenue (includes shipping) = Sum of (Total - Tax - shipping)
-    gross_revenue = (master["total"] - master["tax"] - master["shipping"]).sum(skipna=True)
-
-    shipping_collected = master["shipping"].sum(skipna=True)
-
-    # Taxes Collected = Sum of taxes
-    taxes_collected = master["tax"].sum(skipna=True)
+    gross_revenue = (master_df["total"] - master_df["tax"] - master_df["shipping"]).sum(skipna=True)
+    shipping_collected = master_df["shipping"].sum(skipna=True)
+    taxes_collected = master_df["tax"].sum(skipna=True)
 
     # ---- COGS ----
-    cogs_total = master["bar_cogs"].sum(skipna=True)
+    cogs_total = master_df["bar_cogs"].sum(skipna=True)
 
     # ---- SHIPPING COSTS ----
-    # 1) Sum of total_shipping_cost from master log (3PL per order)
-    shipping_costs_orders = master["total_shipping_cost"].sum(skipna=True)
+    shipping_costs_orders = master_df["total_shipping_cost"].sum(skipna=True)
 
-    # 2) Sum of Receiving column(s) from 3PL spreadsheet (for Shipment Orders)
-    shipments = threepl.copy()
+    shipments = threepl_df.copy()
 
-    # Try several likely column names for "Receiving"
-    candidate_receiving_cols = [
-        "Receiving"
-    ]
+    candidate_receiving_cols = ["Receiving"]
     receiving_cols = [c for c in candidate_receiving_cols if c in shipments.columns]
 
     if receiving_cols:
-        receiving_df = shipments[receiving_cols].apply(
-            pd.to_numeric, errors="coerce"
-        )
+        receiving_df = shipments[receiving_cols].apply(pd.to_numeric, errors="coerce")
         receiving_sum = receiving_df.sum().sum()
     else:
         receiving_sum = 0.0
 
-    # 3) Add payment processing fee (user input)
     shipping_costs_total = shipping_costs_orders + receiving_sum + payment_processing_fee
 
     # ---- GROSS PROFIT & MARGIN ----
@@ -89,20 +92,21 @@ def build_weekly_summary(
     gross_margin = gross_profit / (gross_revenue + shipping_collected) if gross_revenue != 0 else np.nan
 
     # ---- INVENTORY / SALES ----
-    # Boxes sold this week: sum line_item_quantity where box_or_bar == "box"
-    boxes_sold = master.loc[
-        master["box_or_bar"] == "box", "line_item_quantity"
-    ].sum(skipna=True)
+    # Exclude sales-team samples from boxes/bars sold counts
+    if "source" in master_df.columns:
+        boxes_sold = master_df.loc[
+            (master_df["box_or_bar"] == "box") & (master_df["source"] != "sales_team"),
+            "line_item_quantity",
+        ].sum(skipna=True)
 
-    # Bars sold this week: sum line_item_quantity where box_or_bar == "bar"
-    bars_sold = master.loc[
-        master["box_or_bar"] == "bar", "line_item_quantity"
-    ].sum(skipna=True)
-
-    # Total inventory sold (bars) = sum total_bars_sold from master log
-    total_inventory_sold = master["total_bars_sold"].sum(skipna=True)
-
-    # Weekly ending inventory (bars)
+        bars_sold = master_df.loc[
+            (master_df["box_or_bar"] == "bar") & (master_df["source"] != "sales_team"),
+            "line_item_quantity",
+        ].sum(skipna=True)
+    else:
+        boxes_sold = master_df.loc[master_df["box_or_bar"] == "box", "line_item_quantity"].sum(skipna=True)
+        bars_sold = master_df.loc[master_df["box_or_bar"] == "bar", "line_item_quantity"].sum(skipna=True)
+    total_inventory_sold = master_df["total_bars_sold"].sum(skipna=True)
     weekly_ending_inventory = starting_inventory - total_inventory_sold
 
     # ---- BUILD SUMMARY ROW ----
@@ -125,7 +129,16 @@ def build_weekly_summary(
     }
 
     summary_df = pd.DataFrame([summary])
-    summary_df.to_csv(output_path, index=False)
+    if output_path:
+        out_path = Path(output_path)
+        suffix = out_path.suffix.lower()
+        if suffix in (".xlsx", ".xls"):
+            try:
+                summary_df.to_excel(output_path, index=False)
+            except ImportError:
+                raise ImportError("Writing Excel files requires 'openpyxl' (pip install openpyxl).")
+        else:
+            summary_df.to_csv(output_path, index=False)
 
     # ---- PRINT A NICE SUMMARY ----
     print("\n===== CUMULATIVE WEEKLY FINANCIALS (OVERALL) =====")
@@ -150,7 +163,10 @@ def build_weekly_summary(
     print(f"Total Inventory Sold (bars):      {int(total_inventory_sold)}")
     print(f"Weekly Ending Inventory (bars):   {int(weekly_ending_inventory)}")
 
-    print(f"\nWeekly summary written to: {output_path}")
+    if output_path:
+        print(f"\nWeekly summary written to: {output_path}")
+
+    return summary_df
 
 
 if __name__ == "__main__":

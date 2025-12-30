@@ -30,13 +30,24 @@ def autosize_columns(ws):
 
 
 def build_weekly_workbook(
-    master_log_path="master_log_all_orders.csv",
-    weekly_summary_path="weekly_summary.csv",
+    master,
+    weekly_summary,
     output_path="Skye_Weekly_Report.xlsx",
 ):
+    """
+    Build an Excel workbook from `master` and `weekly_summary` which may be
+    file paths or DataFrames. Writes the Excel workbook to `output_path`.
+    """
     # ---- LOAD DATA ----
-    master = pd.read_csv(master_log_path)
-    summary_raw = pd.read_csv(weekly_summary_path)
+    if isinstance(master, pd.DataFrame):
+        master_df = master.copy()
+    else:
+        master_df = pd.read_csv(master)
+
+    if isinstance(weekly_summary, pd.DataFrame):
+        summary_raw = weekly_summary.copy()
+    else:
+        summary_raw = pd.read_csv(weekly_summary)
 
     if summary_raw.empty:
         raise ValueError("weekly_summary.csv is empty – run your summary script first.")
@@ -45,8 +56,8 @@ def build_weekly_workbook(
 
     # ---- ENSURE MASTER NUMERIC COLUMNS ----
     for col in ["subtotal", "discount", "shipping", "tax", "bar_cogs", "total_shipping_cost"]:
-        if col in master.columns:
-            master[col] = pd.to_numeric(master[col], errors="coerce")
+        if col in master_df.columns:
+            master_df[col] = pd.to_numeric(master_df[col], errors="coerce")
 
     # ---- ENSURE SUMMARY NUMERIC COLUMNS ----
     num_cols = [
@@ -91,7 +102,7 @@ def build_weekly_workbook(
     if "COGS_Total" in s.index and not pd.isna(s["COGS_Total"]):
         cogs_total = float(s["COGS_Total"])
     else:
-        cogs_total = master["bar_cogs"].sum(skipna=True)
+        cogs_total = master_df["bar_cogs"].sum(skipna=True)
 
     # Total 3PL Costs = shipping (3PL) + receiving + payment processing fee
     # Already computed in weekly_summary as Shipping_Costs_Total
@@ -174,8 +185,8 @@ def build_weekly_workbook(
     # ======================================================
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-    # Tab 1: master log table
-        master.to_excel(writer, sheet_name="Master Log", index=False)
+        # Tab 1: master log table
+        master_df.to_excel(writer, sheet_name="Master Log", index=False)
     
     # Tab 2: Financial & Inventory Summary
         summary_pretty.to_excel(writer, sheet_name="Financial Summary", index=False)

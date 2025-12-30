@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import os
+import re
+from datetime import datetime
+import pandas as pd
 from MasterLogCreation import build_master_log
 from WeeklySummaryCreator import build_weekly_summary, get_float_input, get_int_input
 from BuildWeeklyWorkbook import build_weekly_workbook
@@ -7,30 +10,62 @@ from BuildWeeklyWorkbook import build_weekly_workbook
 def main():
     print("=== Skye Period Report Pipeline ===")
 
-    # ---- Get file paths from user (with sensible defaults) ----
-    orders_file = input("Path to Shopify orders CSV [orders_export_1 (2).csv]: ").strip()
+    # ---- input files (CHANGE EACH TIME) ----
+    orders_file = "/Users/samskanse/desktop/calibrate_skye_12-01_12-07/orders_export_1-2.csv"
     if not orders_file:
-        orders_file = "orders_export_1 (2).csv"
+        raise FileNotFoundError("Orders file path not provided.")
+    if not os.path.isfile(orders_file):
+        raise FileNotFoundError(f"Orders file not found: {orders_file}")
 
-    threepl_file = input("Path to 3PL Excel file [Skye Performance...xlsx]: ").strip()
+    threepl_file = "/Users/samskanse/desktop/calibrate_skye_12-01_12-07/Skye Performance 12.01.25 to 12.07.25.xlsx"
     if not threepl_file:
-        threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
+        raise FileNotFoundError("3PL file path not provided.")
+    if not os.path.isfile(threepl_file):
+        raise FileNotFoundError(f"3PL file not found: {threepl_file}")
 
-    master_log_output = input(
-        "Output master log CSV [master_log_all_orders.csv]: "
-    ).strip()
-    if not master_log_output:
-        master_log_output = "master_log_all_orders.csv"
+    
+    # Try to infer start/end from filename like: '... 11.17.25 to 11.23.25.xlsx'
+    def _infer_date_range_from_filename(fname: str):
+        m = re.search(r"(\d{1,2}\.\d{1,2}\.\d{2})\s*to\s*(\d{1,2}\.\d{1,2}\.\d{2})", fname, re.IGNORECASE)
+        if not m:
+            return None, None
 
-    weekly_summary_output = "weekly_summary.csv"  # can parameterize later if you like
+        def _parse_mmddyy(s: str):
+            month, day, yy = s.split('.')
+            year = 2000 + int(yy)
+            return datetime(year=int(year), month=int(month), day=int(day))
 
-    report_output = input(
-        "Output Excel report [Skye_Period_Report.xlsx]: "
-    ).strip()
-    if not report_output:
-        report_output = "Skye_Period_Report.xlsx"
+        try:
+            return _parse_mmddyy(m.group(1)), _parse_mmddyy(m.group(2))
+        except Exception:
+            return None, None
 
-    # ---- Get financial inputs once ----
+    start_date, end_date = _infer_date_range_from_filename(threepl_file)
+
+    # Fallback: read the 3PL excel and search for any column containing 'date'
+    if start_date is None:
+        try:
+            df_3pl = pd.read_excel(threepl_file)
+            date_cols = [c for c in df_3pl.columns if 'date' in str(c).lower()]
+            if date_cols:
+                dates = []
+                for c in date_cols:
+                    parsed = pd.to_datetime(df_3pl[c], errors='coerce')
+                    dates.extend(parsed.dropna().tolist())
+                if dates:
+                    start_date = min(dates)
+                    end_date = max(dates)
+        except Exception:
+            start_date = None
+
+
+    # --- final report output (CHANGE EACH TIME) ----
+    if start_date is not None and end_date is not None:
+        report_output = f"/Users/samskanse/desktop/skye_period_reports/Skye_Period_Report_{start_date.strftime('%Y-%m-%d')}_to_{end_date.strftime('%Y-%m-%d')}.xlsx"
+    else:
+        report_output = "/Users/samskanse/desktop/skye_period_reports/Skye_Period_Report.xlsx"
+
+    # ---- financial inputs (Ask for) ----
     print("\n=== Period Inputs ===")
     payment_processing_fee = get_float_input(
         "Enter payment processing fee for the period (e.g. 123.45): ", decimals=2
@@ -39,25 +74,25 @@ def main():
         "Enter starting inventory (in bars, whole number): "
     )
 
-    # ---- STEP 1: build master log ----
-    print("\n[1/3] Building master log...")
-    build_master_log(orders_file, threepl_file, master_log_output)
+    # ---- STEP 1: build master log (returns DataFrame) ----
+    print("\n[1/3] Building master log (in-memory)...")
+    master_df = build_master_log(orders_file, threepl_file, output_path=None)
 
-    # ---- STEP 2: build weekly summary ----
-    print("\n[2/3] Building weekly summary...")
-    build_weekly_summary(
-        master_log_output,
+    # ---- STEP 2: build weekly summary (returns DataFrame) ----
+    print("\n[2/3] Building weekly summary (in-memory)...")
+    summary_df = build_weekly_summary(
+        master_df,
         threepl_file,
-        weekly_summary_output,
+        output_path=None,
         payment_processing_fee=payment_processing_fee,
         starting_inventory=starting_inventory,
     )
 
-    # ---- STEP 3: build final Excel report ----
+    # ---- STEP 3: build final Excel report (writes workbook) ----
     print("\n[3/3] Building final Excel report...")
     build_weekly_workbook(
-        master_log_path=master_log_output,
-        weekly_summary_path=weekly_summary_output,
+        master_df,
+        summary_df,
         output_path=report_output,
     )
 
