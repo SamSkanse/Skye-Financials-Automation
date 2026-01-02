@@ -163,26 +163,28 @@ def build_weekly_workbook(
     ])
 
     # Revenue structure
-    rows.append([escape_excel_formula("Revenue"), f"${revenue_product:,.2f}"])
-    rows.append([escape_excel_formula("+ Shipping collected"), f"${shipping_collected:,.2f}"])
+    # Use numeric types for values so Excel stores real numbers and can be formatted
+    rows.append([escape_excel_formula("Revenue"), revenue_product])
+    rows.append([escape_excel_formula("+ Shipping collected"), shipping_collected])
     rows.append([escape_excel_formula("-------------------------"), ""])
-    rows.append([escape_excel_formula("Gross Revenue"), f"${gross_revenue:,.2f}"])
+    rows.append([escape_excel_formula("Gross Revenue"), gross_revenue])
 
     # Taxes
-    rows.append([escape_excel_formula("+ Taxes Collected"), f"${taxes_collected:,.2f}"])
+    rows.append([escape_excel_formula("+ Taxes Collected"), taxes_collected])
 
     # COGS & 3PL
-    rows.append([escape_excel_formula("- COGS"), f"${cogs_total:,.2f}"])
+    rows.append([escape_excel_formula("- COGS"), cogs_total])
     rows.append([
         escape_excel_formula("- Total 3PL Costs (shipping, receiving, payment processing fee)"),
-        f"${total_3pl_costs:,.2f}",
+        total_3pl_costs,
     ])
     rows.append([escape_excel_formula("------------------------------------------------------"), ""])
 
     # Gross Profit & Margin
-    rows.append([escape_excel_formula("Gross Profit"), f"${gross_profit:,.2f}"])
+    rows.append([escape_excel_formula("Gross Profit"), gross_profit])
     if not np.isnan(gross_margin):
-        rows.append([escape_excel_formula("Gross Margin"), f"{gross_margin * 100:,.2f}%"])
+        # store as a fraction (e.g., 0.25 for 25%) so Excel percent formatting works
+        rows.append([escape_excel_formula("Gross Margin"), gross_margin])
     else:
         rows.append([escape_excel_formula("Gross Margin"), "N/A"])
 
@@ -192,12 +194,12 @@ def build_weekly_workbook(
     # Inventory header
     rows.append([escape_excel_formula("===============Inventory / Units======================="), ""])
 
-    # Inventory details (safe – none begin with +, -, =) but we can still escape for consistency
-    rows.append([escape_excel_formula("Starting Inventory (bars)"), f"{starting_inventory:,}"])
-    rows.append([escape_excel_formula("Boxes Sold This Period"), f"{boxes_sold}"])
-    rows.append([escape_excel_formula("Bars Sold This Period (single bars)"), f"{bars_sold}"])
-    rows.append([escape_excel_formula("Total Inventory Sold (bars)"), f"{total_inventory_sold:,}"])
-    rows.append([escape_excel_formula("Weekly Ending Inventory (bars)"), f"{weekly_ending_inventory:,}"])
+    # Inventory details (store as integers so Excel keeps numeric types)
+    rows.append([escape_excel_formula("Starting Inventory (bars)"), starting_inventory])
+    rows.append([escape_excel_formula("Boxes Sold This Period"), boxes_sold])
+    rows.append([escape_excel_formula("Bars Sold This Period (single bars)"), bars_sold])
+    rows.append([escape_excel_formula("Total Inventory Sold (bars)"), total_inventory_sold])
+    rows.append([escape_excel_formula("Weekly Ending Inventory (bars)"), weekly_ending_inventory])
 
 
     summary_pretty = pd.DataFrame(rows, columns=["Metric", "Value"])
@@ -217,6 +219,37 @@ def build_weekly_workbook(
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             autosize_columns(ws)
+
+        # Apply number formats to Financial Summary so values are stored as numbers
+        if "Financial Summary" in wb.sheetnames:
+            ws_summary = wb["Financial Summary"]
+            # DataFrame wrote headers in row 1; data starts at row 2
+            for row in ws_summary.iter_rows(min_row=2, min_col=1, max_col=2):
+                metric_cell, value_cell = row[0], row[1]
+                metric_text = str(metric_cell.value or "").lower()
+                # Skip empty values and separators
+                if value_cell.value is None or value_cell.value == "":
+                    continue
+
+                # Percentages (Gross Margin)
+                if "margin" in metric_text:
+                    try:
+                        # Expecting a fraction (e.g., 0.25) -> display as percent
+                        value_cell.number_format = '0.00%'
+                    except Exception:
+                        pass
+                # Currency-like values
+                elif any(k in metric_text for k in ["revenue", "tax", "cogs", "shipping", "profit", "3pl", "payment processing fee"]):
+                    try:
+                        value_cell.number_format = '"$"#,##0.00'
+                    except Exception:
+                        pass
+                # Integer counts (inventory / units)
+                elif any(k in metric_text for k in ["inventory", "bars", "boxes", "sold", "starting inventory", "ending inventory", "total inventory"]):
+                    try:
+                        value_cell.number_format = '#,##0'
+                    except Exception:
+                        pass
 
         print(f"Workbook written to: {output_path}")
 
