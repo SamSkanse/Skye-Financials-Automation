@@ -98,10 +98,15 @@ def build_weekly_summary(
     cogs_total = master_df["bar_cogs"].sum(skipna=True)
 
     # ---- SHIPPING COSTS ----
-    shipping_costs_orders = master_df["total_shipping_cost"].sum(skipna=True)
+    # Sum per-order shipping from the master frame. Some sample rows used
+    shipping_costs_orders = 0.0
+    for col in ["total_shipping_cost"]:
+        if col in master_df.columns:
+            shipping_costs_orders += master_df[col].sum(skipna=True)
 
     shipments = threepl_df.copy()
 
+    # Receiving (if present)
     candidate_receiving_cols = ["Receiving"]
     receiving_cols = [c for c in candidate_receiving_cols if c in shipments.columns]
 
@@ -111,7 +116,21 @@ def build_weekly_summary(
     else:
         receiving_sum = 0.0
 
-    shipping_costs_total = shipping_costs_orders + receiving_sum + payment_processing_fee
+    # ---- Extra 3PL rows (e.g., Freight) ----
+    # Some 3PL exports include rows with Type != 'Shipment Order' (for
+    # example 'Freight'). Those rows may carry Handling Fee / Total Shipping
+    # Cost / Packaging values that should be included in the period-level
+    # 3PL costs. Sum those here and add them to shipping_costs_total.
+    extra_shipping_sum = 0.0
+    ship_cols = [c for c in ["Handling Fee", "Total Shipping Cost", "Packaging"] if c in shipments.columns]
+    if "Type" in shipments.columns and ship_cols:
+        other_mask = ~shipments["Type"].astype(str).str.lower().eq("shipment order")
+        if other_mask.any():
+            extra_df = shipments.loc[other_mask, ship_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+            # Sum across the row then across rows
+            extra_shipping_sum = extra_df.sum(axis=1).sum()
+
+    shipping_costs_total = shipping_costs_orders + receiving_sum + payment_processing_fee + extra_shipping_sum
 
     # ---- GROSS PROFIT & MARGIN ----
     gross_profit = gross_revenue + shipping_collected - cogs_total - shipping_costs_total

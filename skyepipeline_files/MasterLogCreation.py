@@ -330,7 +330,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             "tax": pd.to_numeric(samples["Total Tax"], errors="coerce"),
             "total": np.nan,
             "bar_cogs": samples["bar_cogs"],
-            "total_shipping_cost_3pl": samples["total_shipping_cost"],
+            "total_shipping_cost": samples["total_shipping_cost"],
         }
     )
 

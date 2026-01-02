@@ -36,13 +36,14 @@ def main():
     print("=== Skye Period Report Pipeline ===")
 
     # ---- input files (CHANGE EACH TIME) ----
-    orders_file = "/Users/samskanse/desktop/calibrate_skye_12-15_12-25/orders_export_1-2.csv"
+    orders_file = "/Users/samskanse/Desktop/calibrate_skye_11-17_11-23/orders_export_1-2.csv"
+
     if not orders_file:
         raise FileNotFoundError("Orders file path not provided.")
     if not os.path.isfile(orders_file):
         raise FileNotFoundError(f"Orders file not found: {orders_file}")
 
-    threepl_file = "/Users/samskanse/desktop/calibrate_skye_12-15_12-25/Skye Performance 12.15.25 to 12.21.25.xlsx"
+    threepl_file = "/Users/samskanse/Desktop/calibrate_skye_11-17_11-23/Skye Performance 11.17.25 to 11.23.25.xlsx"
     if not threepl_file:
         raise FileNotFoundError("3PL file path not provided.")
     if not os.path.isfile(threepl_file):
