@@ -106,23 +106,23 @@ def build_weekly_summary(
 
     shipments = threepl_df.copy()
 
-    # Receiving (if present)
-    candidate_receiving_cols = ["Receiving"]
-    receiving_cols = [c for c in candidate_receiving_cols if c in shipments.columns]
-
-    if receiving_cols:
-        receiving_df = shipments[receiving_cols].apply(pd.to_numeric, errors="coerce")
-        receiving_sum = receiving_df.sum().sum()
-    else:
-        receiving_sum = 0.0
-
-    # ---- Extra 3PL rows (e.g., Freight) ----
-    # Some 3PL exports include rows with Type != 'Shipment Order' (for
-    # example 'Freight'). Those rows may carry Handling Fee / Total Shipping
-    # Cost / Packaging values that should be included in the period-level
-    # 3PL costs. Sum those here and add them to shipping_costs_total.
+    # ---- Extra 3PL rows (e.g., Handling, Receiving, Freight, Storage) ----
+    # Sum any cost-like columns for rows where Type != 'Shipment Order'.
+    # These columns can include: Handling Fee, Total Shipping Cost, LTL Freight,
+    # Packaging, Label Fee, Receiving, Returns, Storage. If present, they will
+    # be summed per-row and added to the period 3PL extra costs.
+    extra_cols_candidates = [
+        "Handling Fee",
+        "Total Shipping Cost",
+        "LTL Freight",
+        "Packaging",
+        "Label Fee",
+        "Receiving",
+        "Returns",
+        "Storage",
+    ]
+    ship_cols = [c for c in extra_cols_candidates if c in shipments.columns]
     extra_shipping_sum = 0.0
-    ship_cols = [c for c in ["Handling Fee", "Total Shipping Cost", "Packaging"] if c in shipments.columns]
     if "Type" in shipments.columns and ship_cols:
         other_mask = ~shipments["Type"].astype(str).str.lower().eq("shipment order")
         if other_mask.any():
@@ -130,7 +130,7 @@ def build_weekly_summary(
             # Sum across the row then across rows
             extra_shipping_sum = extra_df.sum(axis=1).sum()
 
-    shipping_costs_total = shipping_costs_orders + receiving_sum + payment_processing_fee + extra_shipping_sum
+    shipping_costs_total = shipping_costs_orders + payment_processing_fee + extra_shipping_sum
 
     # ---- GROSS PROFIT & MARGIN ----
     gross_profit = gross_revenue + shipping_collected - cogs_total - shipping_costs_total
@@ -162,7 +162,7 @@ def build_weekly_summary(
         "COGS_Total": cogs_total,
         "Shipping_Costs_Total": shipping_costs_total,
         "Shipping_Costs_Orders": shipping_costs_orders,
-        "Receiving_Sum": receiving_sum,
+        "3PL_Extra_Costs": extra_shipping_sum,
         "Payment_Processing_Fee": payment_processing_fee,
         "Gross_Profit": gross_profit,
         "Gross_Margin": gross_margin,
@@ -192,7 +192,7 @@ def build_weekly_summary(
     print(f"Taxes Collected:         ${taxes_collected:,.2f}")
     print(f"COGS (total):            ${cogs_total:,.2f}")
     print(f"Shipping Costs (3PL): ${shipping_costs_orders:,.2f}")
-    print(f"Receiving (3PL):         ${receiving_sum:,.2f}")
+    print(f"3PL Extra Costs:         ${extra_shipping_sum:,.2f}")
     print(f"Payment Processing Fee:  ${payment_processing_fee:,.2f}")
     print(f"Total Shipping Costs:    ${shipping_costs_total:,.2f}")
     print(f"Gross Profit:            ${gross_profit:,.2f}")
