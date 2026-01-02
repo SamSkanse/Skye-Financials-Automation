@@ -3,6 +3,28 @@ import pandas as pd
 import numpy as np
 import openpyxl.utils as get_column_letter
 
+"""
+BuildWeeklyWorkbook.py
+
+Purpose:
+ - Create the final Excel workbook for the period report. Writes two tabs:
+     1) `Master Log` (detailed per-order rows)
+     2) `Financial Summary` (human-friendly, pre-formatted summary table)
+
+Key operations performed:
+ - Accepts `master` and `weekly_summary` as DataFrames or file paths.
+ - Recalculates and validates key financial metrics to ensure consistency
+     between the Master Log and the summary inputs.
+ - Builds a readable summary table (rows with escaped leading `+`/`-` so
+     Excel does not treat them as formulas) and autosizes columns for neat output.
+ - Writes the two-sheet workbook to `output_path` using `openpyxl` engine.
+
+Notes:
+ - Cells that begin with `+` or `-` are escaped to avoid Excel formula parsing.
+ - The module auto-sizes columns for readability and requires `openpyxl` to
+     write `.xlsx` files.
+"""
+
 def escape_excel_formula(text):
     if isinstance(text, str) and text and text[0] in ("=", "+", "-"):
         return "'" + text
@@ -199,11 +221,11 @@ def build_weekly_workbook(
         print(f"Workbook written to: {output_path}")
 
 
-
-if __name__ == "__main__":
-    build_weekly_workbook(
-        master_log_path="master_log_Oct24_to_Nov21.csv",
-        weekly_summary_path="weekly_summary.csv",
-        output_path="Skye_Period_Report.xlsx",
-    )
+# Runner for testing
+# if __name__ == "__main__":
+#     build_weekly_workbook(
+#         master_log_path="master_log_Oct24_to_Nov21.csv",
+#         weekly_summary_path="weekly_summary.csv",
+#         output_path="Skye_Period_Report.xlsx",
+#     )
 

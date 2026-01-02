@@ -7,6 +7,31 @@ from skyepipeline_files.MasterLogCreation import build_master_log
 from skyepipeline_files.WeeklySummaryCreator import build_weekly_summary, get_float_input, get_int_input
 from skyepipeline_files.BuildWeeklyWorkbook import build_weekly_workbook
 
+"""
+SkyePipeline.py
+
+Purpose:
+ - Top-level orchestration script for the Skye period report pipeline.
+
+Key operations performed:
+ - Validate input file paths for the Shopify orders CSV and 3PL (Calibrate) Excel file.
+ - Attempt to infer the report date range from the 3PL filename or fall back
+     to scanning date-like columns in the 3PL sheet.
+ - Prompt the user for runtime inputs (payment processing fee and starting
+     inventory) when running interactively.
+ - Execute the three main pipeline steps in-memory:
+         1) `build_master_log` from `skyepipeline_files.MasterLogCreation` (returns DataFrame)
+         2) `build_weekly_summary` from `skyepipeline_files.WeeklySummaryCreator` (returns DataFrame)
+         3) `build_weekly_workbook` from `skyepipeline_files.BuildWeeklyWorkbook` (writes the Excel workbook)
+ - Write the final two-tab Excel report (Master Log + Financial Summary) to the
+     inferred `report_output` path.
+
+Notes:
+ - This script is intended as a runnable convenience wrapper. The core logic
+     is implemented in the modules under `skyepipeline_files/` so they can be
+     imported and tested independently.
+"""
+
 def main():
     print("=== Skye Period Report Pipeline ===")
 

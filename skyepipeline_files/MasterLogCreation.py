@@ -4,6 +4,34 @@ import numpy as np
 import re
 from pathlib import Path
 
+"""
+MasterLogCreation.py
+
+Purpose:
+ - Build the Master Log dataframe by merging Shopify order exports with
+     3PL (Calibrate) shipment rows. Produces one row per Shopify order plus
+     additional rows for free samples that originate in the 3PL data.
+
+Key operations performed:
+ - Read Shopify orders and 3PL sheets (accepts DataFrame or file path).
+ - Keep all Shopify orders and left-join matching 3PL shipment data by
+     order ID (`Name` in Shopify ↔ `Store Order Number` in 3PL).
+ - Classify items as `box` or `bar` (Shopify pricing rules) and compute
+     `total_bars_sold`, `bar_cogs` (using per-bar COGS), and `total_shipping_cost`
+     (sum of Handling Fee, Total Shipping Cost, Packaging from 3PL).
+ - Extract free-sample rows from 3PL (rows with no `Store Order Number`),
+     treat them as separate Master Log rows, and derive quantity/price where possible.
+ - Detect sales-team / GTM sendouts via keywords in a Description-like column
+     and mark these rows so they are excluded from sales/inventory metrics
+     (source/email updated, numeric/financial fields zeroed except 3PL shipping).
+ - Return a pandas.DataFrame with the consolidated Master Log. Optionally
+     write CSV or Excel to `output_path` when provided.
+
+Notes:
+ - Uses the module-level constant `PER_BAR_COGS` to compute per-row COGS.
+ - Excel writing requires `openpyxl` when using `.xlsx` output paths.
+"""
+
 # ---- CONSTANTS ----
 # Per-bar COGS from: 39,891.91 / 15,848
 PER_BAR_COGS = 39891.91 / 15848  # ≈ 2.517...
@@ -359,14 +387,15 @@ def build_master_log(orders_path, threepl_path, output_path=None):
     return master
 
 
-if __name__ == "__main__":
-    # Update these paths as needed
-    orders_file = "/Users/samskanse/desktop/orders_11-21_to_11-28.csv"
-    # threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
-    # output_file = "/Users/samskanse/desktop/order_log_11-21_to_11-28.csv"
+# Runner for testing
+# if __name__ == "__main__":
+#     # Update these paths as needed
+#     orders_file = "/Users/samskanse/desktop/orders_11-21_to_11-28.csv"
+#     # threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
+#     # output_file = "/Users/samskanse/desktop/order_log_11-21_to_11-28.csv"
 
-    # build_master_log(orders_file, threepl_file, output_file)
-    orders_log_from_csv(
-        orders_file,
-        output_path="/Users/samskanse/desktop/orders_only_log_11-21_to_11-28.xlsx",
-    )
+#     # build_master_log(orders_file, threepl_file, output_file)
+#     orders_log_from_csv(
+#         orders_file,
+#         output_path="/Users/samskanse/desktop/orders_only_log_11-21_to_11-28.xlsx",
+#     )

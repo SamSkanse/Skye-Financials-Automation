@@ -54,6 +54,14 @@ Standard output filename: `Skye_Period_Report_YYYY_MM-DD_to_YYYY_MM-DD.xlsx`
 2. Compute weekly financials and inventory summary from the Master Log.
 3. Export a two-tab Excel workbook containing the Master Log and the Financial Summary.
 
+## Where code lives
+The implementation for each pipeline step is organized into modules under the `skyepipeline_files` package:
+
+- `skyepipeline_files/MasterLogCreation.py`: builds the Master Log (merges Shopify orders with 3PL shipments and handles free samples / sales-team sendouts).
+- `skyepipeline_files/WeeklySummaryCreator.py`: computes the Financial & Inventory summary DataFrame from the Master Log.
+- `skyepipeline_files/BuildWeeklyWorkbook.py`: writes the final two-tab Excel workbook (`Master Log` + `Financial Summary`) from the pipeline DataFrames.
+- `SkyePipeline.py`: top-level runner that orchestrates the steps (reads inputs, calls the three modules above, and writes the report).
+
 ## Master Log (per order row)
 The Master Log contains three logical groups of fields:
 

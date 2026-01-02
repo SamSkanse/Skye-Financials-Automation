@@ -3,6 +3,32 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
+"""
+WeeklySummaryCreator.py
+
+Purpose:
+ - Compute the weekly Financial & Inventory summary from the Master Log
+     and 3PL data. Produces a one-row summary DataFrame with the key metrics
+     required for the period report.
+
+Key operations performed:
+ - Accepts `master` and `threepl` as DataFrames or file paths.
+ - Normalizes numeric columns and prompts for runtime inputs when not supplied:
+     payment processing fee and starting inventory (bars).
+ - Calculates gross revenue, shipping collected, taxes collected, COGS,
+     3PL shipping/receiving costs, total shipping costs (including payment fee),
+     gross profit, and gross margin.
+ - Computes inventory movement (boxes/bars sold) and excludes rows labeled
+     `source == 'sales_team'` from boxes/bars counts so internal/GTM sendouts do
+     not skew sales metrics.
+ - Returns a one-row `summary_df` and optionally writes to CSV/XLSX.
+
+Notes:
+ - The function is designed to be used programmatically (returns DataFrame)
+     and interactively (prompts for missing inputs).
+ - Excel output requires `openpyxl` when writing `.xlsx` files.
+"""
+
 def get_float_input(prompt, decimals=2):
     while True:
         s = input(prompt).strip()
@@ -168,10 +194,10 @@ def build_weekly_summary(
 
     return summary_df
 
+# Runner for testing
+# if __name__ == "__main__":
+#     master_file = "master_log_Oct24_to_Nov21.csv"  # output from step 1
+#     threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
+#     output_file = "weekly_summary.csv"
 
-if __name__ == "__main__":
-    master_file = "master_log_Oct24_to_Nov21.csv"  # output from step 1
-    threepl_file = "Skye Performance 11.17.25 to 11.23.25.xlsx"
-    output_file = "weekly_summary.csv"
-
-    build_weekly_summary(master_file, threepl_file, output_file)
+#     build_weekly_summary(master_file, threepl_file, output_file)
