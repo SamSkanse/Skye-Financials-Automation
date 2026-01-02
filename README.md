@@ -7,132 +7,160 @@ once we get our shipping cost (3PL Calibrate)
 
 
 Formatting: 
-Excel Spreadsheet I create named “Week of xx/xx/xx Skye Financials Summary”
-Which will be renamed replacing the Xs for that week
+output to a excel spreadsheet I create named “Skye_Period_Report_yryr_mm-dd_to_yryr_mm-dd”
 
 Numbers needed:
 
-Financials
-Gross Revenue (Includes our shipping charges)
+Financials (per period):
+Gross Revenue (Revenue + Shipping Charges)
 Taxes Collected
-COGS (per bar)
-Shipping costs (3PL)
+COGS (of bars sold in period)
+Total 3PL costs
 Gross Profit
 Gross Margin
 
-Bars Sold
+Inventory
 Note: 7 bars per box
-Starting Inventory
+Starting Inventory of period
 Starting inventory at 3pl inception (before first sale on october 24th run #1)
-15802
+15802 (maybe)
 Boxes Sold
 Bars Sold
 Total Inventory Sold (Boxes + Bars)
-Weekly Ending Inventory
+# Skye-Financials-Automation
 
-NOTE: Above will do categories, 1. Overall 2. By each channel 
+Automates weekly financial and product reporting by combining Shopify order data with 3PL (Calibrate) shipping/handling records. The pipeline builds a Master Log and a Financial & Inventory summary, then writes a two-tab Excel report named like `Skye_Period_Report_YYYY_MM-DD_to_YYYY_MM-DD`.
 
+## Goal
 
-Flow of operations:
-IMMEDIATE TERM
+Produce a clean, repeatable weekly report that includes:
+- Financial metrics (revenue, taxes, COGS, 3PL costs, gross profit, margin)
+- Inventory movement (boxes and bars sold, starting/ending inventory)
 
-Inputs: Shopify Weekly Csv of orders, 3pl charges spreadsheet, template spreadsheet
+## Output filename
 
-Ops:
+Standard output filename: `Skye_Period_Report_YYYY_MM-DD_to_YYYY_MM-DD.xlsx`
 
-1st: 
-Take Shopify csv orders and 3pl spreadsheet and merge them into a single csv file in format below with only features I am outlining (only use things in parentheses around the features for references of rule or where to find the info from in current inputs
+## Key assumptions and constants
+- 7 bars per box
+- Bar COGS is computed from a historical total (example: 39,891.91 / 15,848 ≈ 2.52 per bar)
 
+## Inputs
+- `Shopify` weekly CSV of orders
+- `3PL` (Calibrate) spreadsheet with shipping, handling, packaging, and sample rows
 
+## High-level Flow
+1. Build a Master Log by merging Shopify and 3PL data into a single dataframe (one row per Shopify order, plus sample rows from 3PL where applicable).
+2. Compute weekly financials and inventory summary from the Master Log.
+3. Export a two-tab Excel workbook containing the Master Log and the Financial Summary.
 
-DO NOT INCLUDE CATEGORIES (Ex. Order Details) IN CSV, JUST THE FEATURES IN CURRENT ORDER
+## Master Log (per order row)
+The Master Log contains three logical groups of fields:
 
+- Orders details
+    - `order_ID` (Shopify `Name`)
+    - `order_date`
+    - `email`
+    - `box_or_bar` (determine from price: box if line item price > 20, bar if < 7)
+    - `source` (channel)
+    - `line_item_quantity`
+    - `total_bars_sold` (if box: `line_item_quantity * 7`; if bar: `line_item_quantity * 1`)
+    - `line_item_price`
 
-Important: To merge understand which 3PL row goes with what orders csv row, each with have an order ID (Name in orders csv and Store order number in 3PL spreadsheet) with format “#1234”
+- Order financials
+    - `subtotal`
+    - `discount`
+    - `shipping` (collected)
+    - `tax`
+    - `total` (subtotal + shipping + tax)
 
+- Costs
+    - `bar_cogs` (per-bar COGS × bars sold for the row)
+    - `total_shipping_cost` (3PL: Handling Fee + Total Shipping + Packaging)
 
+### Free samples (3PL rows without `store order number`)
+- Treated as separate Master Log rows. Fields populated from 3PL where available:
+    - `email` = `FREE SAMPLES` (label for sample rows)
+    - `line_item_quantity` = `Total Quantity` (from 3PL)
+    - `box_or_bar` deduced from `(total price / quantity)`: box if > 20, bar if < 10
+    - `total_shipping_cost` computed from 3PL columns (Handling Fee + Shipping + Packaging)
+    - `tax` and `discount` copied from 3PL when present
 
+## Important merge note
+Match Shopify orders to 3PL rows by order ID: Shopify `Name` and 3PL `Store Order Number` (format `#1234`).
 
-Tab for Master log for each row (order) includes this data below
-Orders Details
-Features: order_ID (order csv says name), order date, email, was it a box or bar sold (box = (line item price > 20), bar = (line item price < 5) ) , source, line item quantity, total bars sold (if box then line item quantity *7, if bar then line item quantity *1), line item price
-Order Financials
-Features: Subtotal, discount, shipping, tax, total (subtotal + shipping + tax)
-Costs
-Features: Bar COGS (= 39,891.91/15848 = 2.51…., if bar sold then 2.51…*line item quantity, if box sold then 2.51…*line item quantity*7), Total shipping cost (Handling Fee + Total Shipping + Packaging, from 3PL (Calibrate Shipping Charges))
+## Weekly Financials & Inventory Summary
+The summary aggregates the Master Log for the period and reports these metrics:
 
-NOTE: IF there is no order number in column “store order number” in 3PL sheet, then order was a free sample and features that should be filled in are below as such in the master log as another row entry (not necessarily in correct order below) (if I don’t give a feature for it leave it blank)
+- a. Gross Revenue (includes shipping collected)
+    - Computed as `Sum(total)` (includes collected shipping and taxes as recorded)
+- b. Taxes Collected
+    - `Sum(tax)`
+- c. COGS
+    - `Sum(bar_cogs)`
+- d. Shipping costs (3PL)
+    - `Sum(total_shipping_cost)` + receiving (if present in 3PL) + payment processing fee (prompted at runtime, two decimals)
+- e. Gross Profit
+    - `Gross Revenue - COGS - Shipping Costs`
+- f. Gross Margin
+    - `Gross Profit / Gross Revenue`
 
-Email = FREE SAMPLE BOX, line item quantity = Total Quantity (column from 3PL sheet), was it a box or bar sold (box = ( total price /quantity > 20), bar = (total price/ quantity < 10), info from 3PL sheet), Total shipping cost (Handling Fee + Total Shipping + Packaging, from 3PL (Calibrate Shipping Charges)), tax (tax column), discount (discount column)
+- g. Starting Inventory (bars)
+    - Prompted at runtime (whole number)
+- h. Boxes Sold this week
+    - Sum of `line_item_quantity` for rows where `box_or_bar == box`
+- i. Bars Sold this week
+    - Sum of `line_item_quantity` for `bar` rows
+- j. Total Inventory Sold (bars)
+    - Boxes converted to bars (`boxes * 7`) + bars sold
+- k. Weekly Ending Inventory
+    - `Starting Inventory - Total Inventory Sold`
 
-Output: csv file
+### Summary layout for the report
+- Column 1: Metric name (A–F)
+- Column 2: Metric value
+- Column 3: blank separator
+- Column 4: Metric name (G–K)
+- Column 5: Metric value
 
-2nd:
-Take our master log and come up with our weekly financials and inventory summary
+Example visual section header in the output workbook:
 
-Formatting:
-Cumulative Weekly Financials
-Overall financials (features below a. b. … etc.)
-Gross Revenue (Includes our shipping charges)
-Sum of Total - Tax - shipping 
-Taxes Collected
-Sum of taxes
-COGS (per bar)
-Sum of COGS
-Shipping costs (3PL)
-Sum of total shipping costs + sum of receiving (a column in 3PL spreadsheet) + payment processing fee (ask user for it when code runs, 2 up to 2 decimal places)
-Gross Profit
-Gross Rev - COGS - Shipping Costs
-Gross Margin
-Gross Profit / Gross Revenue
-Starting Inventory 
-Ask for starting inventory when code is run, whole number
-Boxes Sold this week
-If order = box; box total += line item quantity
-Bars Sold this week
-If order = bar; bar total += line item quantity
-Total Inventory Sold (Boxes + Bars)
-Sum total bars sold (from master log csv)
-Weekly Ending Inventory
-Start inventory - total inventory sold
-
-
-Column 1 Names of metrics A-F
-Column 2 the corresponding numbers
-Column 3 blank 
-Column 4 names of metrics E-K
-Column 5 Corresponding numbers
-
-3rd:
-Take our final two csv files and neatly outputs spreadsheet with 2 tabs
-1 tab with master log of the week 
-2 tab with Financials and inventory numbers of the week
-
-
-Format of financials summary:
 ============== Cumulative Period Financials =====================
 Revenue
-+ Shipping collected
-—-------------------------
-Gross Revenue
-+ Taxes
-- COGS
-- Total 3PL Costs (shipping, receiving, payment processing fee
-—------------------------------------------------------
-Gross Profit
-Gross Margin
-===============Inventory / Units=======================
-Starting Inventory (bars)
-Boxes Sold This Period
-Bars Sold This Period (single bars
-Total Inventory Sold (bars)
-Weekly Ending Inventory (bars)
+ + Shipping collected
+ —-------------------------
+ Gross Revenue
+ + Taxes (collected)
+ - COGS
+ - Total 3PL Costs (shipping, receiving, payment processing fee)
+ —------------------------------------------------------
+ Gross Profit
+ Gross Margin
 
+=============== Inventory / Units =======================
+ Starting Inventory (bars)
+ Boxes Sold This Period
+ Bars Sold This Period (single bars)
+ Total Inventory Sold (bars)
+ Weekly Ending Inventory (bars)
 
+> NOTE: Financial metric names may be adjusted for clarity later.
 
-Future additions:
+## Final export
+The pipeline writes a two-tab Excel workbook:
+- Tab 1: `Master Log` (detailed per-order rows)
+- Tab 2: `Financial Summary` (metrics and inventory table)
+
+## Future additions
 - Get financial metrics by channel
-- Use shopify api for ease of pipeline
-- Sales rate per week of bars (not included samples and internal purchases)
-Table 2 Online Store Weekly Financials
+- Use Shopify API for a more robust pipeline
+- Add per-week sales rate (exclude samples and internal purchases)
+
+## Open questions
+- How many boxes were sent out to Ciaran/other sources before 3PL inception?
+- Were those part of run 1 as well?
+
+---
+This README preserves the original requirements and layout while organizing the content into clear sections for easier reference and implementation.
+
 

@@ -3,9 +3,9 @@ import os
 import re
 from datetime import datetime
 import pandas as pd
-from MasterLogCreation import build_master_log
-from WeeklySummaryCreator import build_weekly_summary, get_float_input, get_int_input
-from BuildWeeklyWorkbook import build_weekly_workbook
+from skyepipeline_files.MasterLogCreation import build_master_log
+from skyepipeline_files.WeeklySummaryCreator import build_weekly_summary, get_float_input, get_int_input
+from skyepipeline_files.BuildWeeklyWorkbook import build_weekly_workbook
 
 def main():
     print("=== Skye Period Report Pipeline ===")
@@ -61,7 +61,7 @@ def main():
 
     # --- final report output (CHANGE EACH TIME) ----
     if start_date is not None and end_date is not None:
-        report_output = f"/Users/samskanse/desktop/skye_period_reports/Skye_Period_Report_{start_date.strftime('%Y-%m-%d')}_to_{end_date.strftime('%Y-%m-%d')}.xlsx"
+        report_output = f"/Users/samskanse/desktop/Skye_Period_Report_{start_date.strftime('%Y-%m-%d')}_to_{end_date.strftime('%Y-%m-%d')}.xlsx"
     else:
         report_output = "/Users/samskanse/desktop/skye_period_reports/Skye_Period_Report.xlsx"
 
