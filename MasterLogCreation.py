@@ -262,9 +262,8 @@ def build_master_log(orders_path, threepl_path, output_path=None):
         pd.to_numeric(samples["Total Price"], errors="coerce")
         / samples["line_item_quantity"]
     )
-    samples["box_or_bar"] = samples.apply(
-        lambda r: classify_sample_item(r["Total Price"], r["Total Quantity"]), axis=1
-    )
+    # Treat all free samples as boxes (7 bars per box)
+    samples["box_or_bar"] = "box"
     samples["total_bars_sold"] = samples.apply(
         lambda r: compute_bars_sold(r["box_or_bar"], r["line_item_quantity"]), axis=1
     )
@@ -291,7 +290,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             # For free samples, fill only what we can from 3PL
             "order_ID": samples["Order Code"],  # no Shopify order number
             "order_date": samples["Actual Shipment Date"],
-            "email": "FREE SAMPLE BOX",
+            "email": "FREE SAMPLES",
             "box_or_bar": samples["box_or_bar"],
             "source": "free_sample",
             "line_item_quantity": samples["line_item_quantity"],
@@ -303,7 +302,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             "tax": pd.to_numeric(samples["Total Tax"], errors="coerce"),
             "total": np.nan,
             "bar_cogs": samples["bar_cogs"],
-            "total_shipping_cost": samples["total_shipping_cost"],
+            "total_shipping_cost_3pl": samples["total_shipping_cost"],
         }
     )
 
