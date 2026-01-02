@@ -148,8 +148,11 @@ Revenue
  —-------------------------
 
  Gross Revenue
+
  \+ Taxes (collected)
+
  \- COGS
+
  \- Total 3PL Costs (shipping, receiving, payment processing fee)
 
  —------------------------------------------------------
@@ -159,10 +162,15 @@ Revenue
  Gross Margin
 
 =============== Inventory / Units =======================
+ 
  Starting Inventory (bars)
+ 
  Boxes Sold This Period
+ 
  Bars Sold This Period (single bars)
+ 
  Total Inventory Sold (bars)
+ 
  Weekly Ending Inventory (bars)
 
 > NOTE: Financial metric names may be adjusted for clarity later.
