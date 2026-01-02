@@ -86,6 +86,20 @@ The Master Log contains three logical groups of fields:
     - `total_shipping_cost` computed from 3PL columns (Handling Fee + Shipping + Packaging)
     - `tax` and `discount` copied from 3PL when present
 
+### Sales-team / GTM sendouts
+Some 3PL sample rows are internal or marketing sendouts (sales-team / GTM). These rows are detected in the 3PL data and handled specially so they don't affect sales/inventory metrics.
+
+- Detection
+    - If the 3PL row has no `Store Order Number` and the 3PL `Description` (or similar column) contains case-insensitive keywords such as `gtm`, `sales team`, `sales_team`, `gtm campaign`, or `marketing`, the row is flagged as a sales-team sendout.
+
+- Handling rules
+    - `source` is set to `sales_team` and `email` is set to `SENT TO SALES TEAM` for these rows.
+    - Inventory impact is removed: `total_bars_sold` (and related inventory counts) is zeroed for sales-team rows so they do not count toward boxes/bars sold.
+    - Financial fields to the right of quantity (unit price, subtotal, discount, shipping collected, tax, total, bar_cogs) are zeroed to avoid inflating revenue or COGS. The 3PL shipping cost is retained.
+    - Sales-team rows are excluded when summing Boxes Sold / Bars Sold in the weekly summary.
+
+Note: Detection relies on the presence of a Description-like column in the 3PL sheet; the keyword list can be adjusted later if needed.
+
 ## Important merge note
 Match Shopify orders to 3PL rows by order ID: Shopify `Name` and 3PL `Store Order Number` (format `#1234`).
 
@@ -126,15 +140,22 @@ The summary aggregates the Master Log for the period and reports these metrics:
 Example visual section header in the output workbook:
 
 ============== Cumulative Period Financials =====================
+
 Revenue
- + Shipping collected
+
+ \+ Shipping collected
+
  —-------------------------
+
  Gross Revenue
- + Taxes (collected)
- - COGS
- - Total 3PL Costs (shipping, receiving, payment processing fee)
+ \+ Taxes (collected)
+ \- COGS
+ \- Total 3PL Costs (shipping, receiving, payment processing fee)
+
  —------------------------------------------------------
+
  Gross Profit
+
  Gross Margin
 
 =============== Inventory / Units =======================
