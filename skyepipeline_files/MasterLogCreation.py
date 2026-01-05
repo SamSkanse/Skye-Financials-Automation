@@ -276,6 +276,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             # Costs
             "bar_cogs": merged["bar_cogs"],
             "total_shipping_cost": merged["total_shipping_cost"],
+            "exclude_from_bars_sold": False,
         }
     )
 
@@ -331,6 +332,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             "total": np.nan,
             "bar_cogs": samples["bar_cogs"],
             "total_shipping_cost": samples["total_shipping_cost"],
+            "exclude_from_bars_sold": False,
         }
     )
 
@@ -342,11 +344,11 @@ def build_master_log(orders_path, threepl_path, output_path=None):
         sample_rows.loc[sales_idx, "source"] = "sales_team"
         sample_rows.loc[sales_idx, "email"] = "SENT TO SALES TEAM"
 
-        # Exclude from inventory counts: zero total_bars_sold
-        if "total_bars_sold" in sample_rows.columns:
-            sample_rows.loc[sales_idx, "total_bars_sold"] = 0
+        # Mark rows to be excluded from overall bars-sold totals
+        sample_rows.loc[sales_idx, "exclude_from_bars_sold"] = True
 
         # Zero-out financial columns to the right of quantity except shipping costs
+        # (keep `total_bars_sold` and `bar_cogs` values available for other uses)
         zero_cols = [
             "line_item_price",
             "subtotal",

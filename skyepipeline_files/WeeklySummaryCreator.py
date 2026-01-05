@@ -151,7 +151,11 @@ def build_weekly_summary(
     else:
         boxes_sold = master_df.loc[master_df["box_or_bar"] == "box", "line_item_quantity"].sum(skipna=True)
         bars_sold = master_df.loc[master_df["box_or_bar"] == "bar", "line_item_quantity"].sum(skipna=True)
-    total_inventory_sold = master_df["total_bars_sold"].sum(skipna=True)
+    # Exclude GTM/sales sendouts from total inventory sold
+    if "exclude_from_bars_sold" in master_df.columns:
+        total_inventory_sold = master_df.loc[master_df["exclude_from_bars_sold"] == False, "total_bars_sold"].sum(skipna=True)
+    else:
+        total_inventory_sold = master_df["total_bars_sold"].sum(skipna=True)
     weekly_ending_inventory = starting_inventory - total_inventory_sold
 
     # ---- BUILD SUMMARY ROW ----

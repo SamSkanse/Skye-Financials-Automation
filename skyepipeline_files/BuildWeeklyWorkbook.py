@@ -2,6 +2,7 @@
 import pandas as pd
 import numpy as np
 import openpyxl.utils as get_column_letter
+from openpyxl.styles import Font
 
 """
 BuildWeeklyWorkbook.py
@@ -55,6 +56,7 @@ def build_weekly_workbook(
     master,
     weekly_summary,
     output_path="Skye_Weekly_Report.xlsx",
+    pos_bars=None,
 ):
     """
     Build an Excel workbook from `master` and `weekly_summary` which may be
@@ -77,7 +79,7 @@ def build_weekly_workbook(
     s = summary_raw.iloc[0].copy()
 
     # ---- ENSURE MASTER NUMERIC COLUMNS ----
-    for col in ["subtotal", "discount", "shipping", "tax", "bar_cogs", "total_shipping_cost"]:
+    for col in ["subtotal", "discount", "shipping", "tax", "bar_cogs", "total_shipping_cost", "total_bars_sold"]:
         if col in master_df.columns:
             master_df[col] = pd.to_numeric(master_df[col], errors="coerce")
 
@@ -166,17 +168,28 @@ def build_weekly_workbook(
     # Use numeric types for values so Excel stores real numbers and can be formatted
     rows.append([escape_excel_formula("Revenue"), revenue_product])
     rows.append([escape_excel_formula("+ Shipping collected"), shipping_collected])
-    rows.append([escape_excel_formula("-------------------------"), ""])
+    rows.append([escape_excel_formula("------------------------------------------------------"), ""])
     rows.append([escape_excel_formula("Gross Revenue"), gross_revenue])
 
     # Taxes
     rows.append([escape_excel_formula("+ Taxes Collected"), taxes_collected])
 
     # COGS & 3PL
-    rows.append([escape_excel_formula("- COGS"), cogs_total])
+    # Store subtractive amounts as negative numbers so Excel can format them
+    try:
+        cogs_value = -abs(float(cogs_total)) if not pd.isna(cogs_total) else np.nan
+    except Exception:
+        cogs_value = -abs(cogs_total) if cogs_total is not None else np.nan
+
+    try:
+        total_3pl_value = -abs(float(total_3pl_costs)) if not pd.isna(total_3pl_costs) else np.nan
+    except Exception:
+        total_3pl_value = -abs(total_3pl_costs) if total_3pl_costs is not None else np.nan
+
+    rows.append([escape_excel_formula("- COGS"), cogs_value])
     rows.append([
         escape_excel_formula("- Total 3PL Costs (shipping, receiving, payment processing fee)"),
-        total_3pl_costs,
+        total_3pl_value,
     ])
     rows.append([escape_excel_formula("------------------------------------------------------"), ""])
 
@@ -195,14 +208,156 @@ def build_weekly_workbook(
     rows.append([escape_excel_formula("===============Inventory / Units======================="), ""])
 
     # Inventory details (store as integers so Excel keeps numeric types)
-    rows.append([escape_excel_formula("Starting Inventory (bars)"), starting_inventory])
-    rows.append([escape_excel_formula("Boxes Sold This Period"), boxes_sold])
-    rows.append([escape_excel_formula("Bars Sold This Period (single bars)"), bars_sold])
-    rows.append([escape_excel_formula("Total Inventory Sold (bars)"), total_inventory_sold])
-    rows.append([escape_excel_formula("Weekly Ending Inventory (bars)"), weekly_ending_inventory])
+
+    rows.append([escape_excel_formula("Starting Inventory (bars)"), starting_inventory, ""])
+
+    # Insert a row of '=' signs and a blank row before Boxes Sold
+    rows.append([escape_excel_formula("======================================================"), "", ""])
+    rows.append(["", "", ""])
+
+    rows.append([escape_excel_formula("Boxes Sold This Period"), boxes_sold, ""])
+
+    # Add explicit bars-per-box row and computed boxes->bars row
+    boxes_per_box = 7
+    rows.append([escape_excel_formula("* bars per box"), boxes_per_box, ""])
+    # separator (visual)
+    rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
+
+    # Derived total: boxes * bars_per_box
+    try:
+        derived_bars_from_summary = int(boxes_sold) * int(boxes_per_box)
+    except Exception:
+        derived_bars_from_summary = boxes_sold * boxes_per_box
+
+    # Compute boxes from master log (sum of line_item_quantity where classified as 'box')
+    try:
+        # base mask: rows classified as boxes
+        mask_box = master_df.get("box_or_bar") == "box"
+
+        # prepare columns safely (fallback to empty strings if column missing)
+        if "email" in master_df.columns:
+            email_col = master_df["email"].astype(str).str.strip().str.upper()
+        else:
+            email_col = pd.Series([""] * len(master_df), index=master_df.index)
+
+        if "source" in master_df.columns:
+            source_col = master_df["source"].astype(str).str.strip().str.lower()
+        else:
+            source_col = pd.Series([""] * len(master_df), index=master_df.index)
+
+        if "sources" in master_df.columns:
+            sources_col = master_df["sources"].astype(str).str.strip().str.lower()
+        else:
+            sources_col = pd.Series([""] * len(master_df), index=master_df.index)
+
+        # Exclude rows that have been marked as sent to sales team (not actually sold)
+        not_sent_to_sales = (
+            (email_col != "SENT TO SALES TEAM") & (source_col != "sales_team") & (sources_col != "sales_team")
+        )
+
+        final_mask = mask_box & not_sent_to_sales
+
+        master_box_qty = pd.to_numeric(master_df.loc[final_mask, "line_item_quantity"], errors="coerce").sum(skipna=True)
+        master_box_qty = int(master_box_qty or 0)
+        master_derived_bars = master_box_qty * boxes_per_box
+    except Exception:
+        master_box_qty = 0
+        master_derived_bars = 0
+
+    note = ""
+    if master_derived_bars != derived_bars_from_summary:
+        note = f"Mismatch: master-derived bars={master_derived_bars}"
+
+    rows.append([escape_excel_formula("Box Bars sold/sent out"), derived_bars_from_summary, note])
+    rows.append([escape_excel_formula("+ Single Bars Sold"), bars_sold, ""])
+
+    # Add a row of dashes between single bars sold and total inventory sold
+    rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
+
+    rows.append([escape_excel_formula("Total Inventory Sold (bars)"), total_inventory_sold, ""])
+
+    # Insert three blank rows, then a compact inventory summary block
+
+    rows.append([escape_excel_formula("======================================================"), "", ""])
+    rows.append(["", "", ""])  # blank
+
+    rows.append([escape_excel_formula("Starting Inventory (bars)"), starting_inventory, ""])
+    # Show total inventory sold as a subtractive value in the compact summary
+    try:
+        total_inventory_sold_value = -abs(int(total_inventory_sold))
+    except Exception:
+        total_inventory_sold_value = -abs(total_inventory_sold) if total_inventory_sold is not None else np.nan
+
+    rows.append([escape_excel_formula("- Total Inventory Sold (bars)"), total_inventory_sold_value, ""])
+    rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
+    rows.append([escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory, ""])
 
 
-    summary_pretty = pd.DataFrame(rows, columns=["Metric", "Value"])
+    # Add a third column for optional notes/comments (e.g., mismatches)
+    summary_pretty = pd.DataFrame(rows, columns=["Metric", "Value", "Note"])
+
+    # ---- POS / 3PL Remaining Bars ----
+    # Determine POS bars value: if caller provided `pos_bars` use it,
+    # otherwise prompt the user when running interactively.
+    try:
+        if pos_bars is None:
+            user_input = input("Enter Bars to be sold (POS) (integer, 0 if none): ")
+            pos_bars_val = int(user_input.strip()) if str(user_input).strip() != "" else 0
+        else:
+            pos_bars_val = int(pos_bars)
+    except Exception:
+        pos_bars_val = 0
+
+    # Add GTM / sales-team sendout bars into the POS bars count so they
+    # are available to be subtracted by the POS calculation but still
+    # remain tracked in the master log (use `exclude_from_bars_sold`).
+    gtm_bars = 0
+    if "exclude_from_bars_sold" in master_df.columns and "total_bars_sold" in master_df.columns:
+        try:
+            gtm_bars = int(master_df.loc[master_df["exclude_from_bars_sold"] == True, "total_bars_sold"].sum(skipna=True) or 0)
+        except Exception:
+            try:
+                gtm_bars = int((master_df.loc[master_df["exclude_from_bars_sold"] == True, "total_bars_sold"].sum(skipna=True)))
+            except Exception:
+                gtm_bars = 0
+
+    try:
+        pos_bars_val = int(pos_bars_val) + int(gtm_bars)
+    except Exception:
+        pass
+
+    # Bars left for POS = pos_bars - single bars sold (per request)
+    try:
+        bars_left_for_pos = int(pos_bars_val) - int(bars_sold)
+    except Exception:
+        bars_left_for_pos = 0
+
+    # Bars left at 3PL = ending inventory - bars_left_for_pos
+    try:
+        bars_left_at_3pl = int(weekly_ending_inventory) - int(bars_left_for_pos)
+    except Exception:
+        bars_left_at_3pl = 0
+
+    pos_note = ""
+    if bars_left_at_3pl < 0:
+        pos_note = f"Negative at 3PL: {bars_left_at_3pl}"
+
+    # Append POS rows to the DataFrame so they appear in the Financial Summary
+    extra_rows = [
+        [escape_excel_formula("======================================================"), "", ""],
+        ["", "", ""],
+        [escape_excel_formula("Bars to be sold (POS)"), pos_bars_val, ""],
+        [escape_excel_formula("- Single Bars Sold"), bars_sold, ""],
+        [escape_excel_formula("------------------------------------------------------"), "", ""],
+        [escape_excel_formula("Bars left at 3PL"), bars_left_at_3pl, pos_note],
+    ]
+
+    # concat extra rows onto summary_pretty
+    if not extra_rows:
+        pass
+    else:
+        extra_df = pd.DataFrame(extra_rows, columns=["Metric", "Value", "Note"])
+        summary_pretty = pd.concat([summary_pretty, extra_df], ignore_index=True)
 
     # ======================================================
     #                WRITE EXCEL WITH TWO TABS
@@ -224,30 +379,47 @@ def build_weekly_workbook(
         if "Financial Summary" in wb.sheetnames:
             ws_summary = wb["Financial Summary"]
             # DataFrame wrote headers in row 1; data starts at row 2
-            for row in ws_summary.iter_rows(min_row=2, min_col=1, max_col=2):
-                metric_cell, value_cell = row[0], row[1]
+            for row in ws_summary.iter_rows(min_row=2, min_col=1, max_col=3):
+                metric_cell = row[0]
+                value_cell = row[1]
+                note_cell = row[2] if len(row) > 2 else None
                 metric_text = str(metric_cell.value or "").lower()
                 # Skip empty values and separators
                 if value_cell.value is None or value_cell.value == "":
                     continue
 
+                # Determine if this metric is subtractive (label starts with '-')
+                is_subtractive = metric_text.strip().startswith("-")
+
                 # Percentages (Gross Margin)
                 if "margin" in metric_text:
                     try:
                         # Expecting a fraction (e.g., 0.25) -> display as percent
-                        value_cell.number_format = '0.00%'
+                        if is_subtractive:
+                            value_cell.number_format = '0.00%;(0.00%)'
+                        else:
+                            value_cell.number_format = '0.00%'
                     except Exception:
                         pass
                 # Currency-like values
-                elif any(k in metric_text for k in ["revenue", "tax", "cogs", "shipping", "profit", "3pl", "payment processing fee"]):
+                # avoid matching bare '3pl' so inventory labels like 'Bars left at 3PL'
+                # are not treated as currency; match cost-related terms instead
+                elif any(k in metric_text for k in ["revenue", "tax", "cogs", "shipping", "profit", "cost", "payment processing fee"]):
                     try:
-                        value_cell.number_format = '"$"#,##0.00'
+                        # Use accounting-style formatting when subtractive so negatives show parentheses
+                        if is_subtractive:
+                            value_cell.number_format = '"$"#,##0.00;(\"$\"#,##0.00)'
+                        else:
+                            value_cell.number_format = '"$"#,##0.00'
                     except Exception:
                         pass
                 # Integer counts (inventory / units)
                 elif any(k in metric_text for k in ["inventory", "bars", "boxes", "sold", "starting inventory", "ending inventory", "total inventory"]):
                     try:
-                        value_cell.number_format = '#,##0'
+                        if is_subtractive:
+                            value_cell.number_format = '#,##0;(#,##0)'
+                        else:
+                            value_cell.number_format = '#,##0'
                     except Exception:
                         pass
 
