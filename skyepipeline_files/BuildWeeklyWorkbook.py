@@ -26,6 +26,8 @@ Notes:
      write `.xlsx` files.
 """
 
+#TODO: CHANGE WEEKLY_ENDING_INVENTORY TO JUST ENDING INVENTORY THROUGHOUT
+
 def escape_excel_formula(text):
     if isinstance(text, str) and text and text[0] in ("=", "+", "-"):
         return "'" + text
@@ -348,6 +350,12 @@ def build_weekly_workbook(
         ["", "", ""],
         [escape_excel_formula("Bars to be sold (POS)"), pos_bars_val, ""],
         [escape_excel_formula("- Single Bars Sold"), bars_sold, ""],
+        [escape_excel_formula("------------------------------------------------------"), "", ""],
+        [escape_excel_formula("Bars outstanding (POS)"), bars_left_for_pos, ""],
+        [escape_excel_formula("======================================================"), "", ""],
+        ["", "", ""],
+        [escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory, ""],
+        [escape_excel_formula("- Bars outstanding (POS)"), -abs(bars_left_for_pos), ""],
         [escape_excel_formula("------------------------------------------------------"), "", ""],
         [escape_excel_formula("Bars left at 3PL"), bars_left_at_3pl, pos_note],
     ]
