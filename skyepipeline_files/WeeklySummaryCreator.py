@@ -140,21 +140,28 @@ def build_weekly_summary(
     # Exclude sales-team samples from boxes/bars sold counts
     if "source" in master_df.columns:
         boxes_sold = master_df.loc[
-            (master_df["box_or_bar"] == "box") & (master_df["source"] != "sales_team"),
+            (master_df["box_or_bar_or_case"] == "box") & (master_df["source"] != "sales_team"),
             "line_item_quantity",
         ].sum(skipna=True)
 
         bars_sold = master_df.loc[
-            (master_df["box_or_bar"] == "bar") & (master_df["source"] != "sales_team"),
+            (master_df["box_or_bar_or_case"] == "bar") & (master_df["source"] != "sales_team"),
+            "line_item_quantity",
+        ].sum(skipna=True)
+        
+        cases_sold = master_df.loc[
+            (master_df["box_or_bar_or_case"] == "case") & (master_df["source"] != "sales_team"),
             "line_item_quantity",
         ].sum(skipna=True)
     else:
-        boxes_sold = master_df.loc[master_df["box_or_bar"] == "box", "line_item_quantity"].sum(skipna=True)
-        bars_sold = master_df.loc[master_df["box_or_bar"] == "bar", "line_item_quantity"].sum(skipna=True)
+        boxes_sold = master_df.loc[master_df["box_or_bar_or_case"] == "box", "line_item_quantity"].sum(skipna=True)
+        bars_sold = master_df.loc[master_df["box_or_bar_or_case"] == "bar", "line_item_quantity"].sum(skipna=True)
+        cases_sold = master_df.loc[master_df["box_or_bar_or_case"] == "case", "line_item_quantity"].sum(skipna=True)
     # Exclude GTM/sales sendouts from total inventory sold
     if "exclude_from_bars_sold" in master_df.columns:
         total_inventory_sold = master_df.loc[master_df["exclude_from_bars_sold"] == False, "total_bars_sold"].sum(skipna=True)
     else:
+        #sums the rows of the total bars that master log has calculated per row
         total_inventory_sold = master_df["total_bars_sold"].sum(skipna=True)
     weekly_ending_inventory = starting_inventory - total_inventory_sold
 
@@ -171,6 +178,7 @@ def build_weekly_summary(
         "Gross_Profit": gross_profit,
         "Gross_Margin": gross_margin,
         "Starting_Inventory_Bars": starting_inventory,
+        "Cases_Sold_This_Week": cases_sold,
         "Boxes_Sold_This_Week": boxes_sold,
         "Bars_Sold_This_Week": bars_sold,
         "Total_Inventory_Sold_Bars": total_inventory_sold,
@@ -207,6 +215,7 @@ def build_weekly_summary(
 
     print("\n===== INVENTORY / UNITS =====")
     print(f"Starting Inventory (bars):        {starting_inventory:,}")
+    print(f"Cases Sold This Week:            {int(cases_sold)}")
     print(f"Boxes Sold This Week:             {int(boxes_sold)}")
     print(f"Bars Sold This Week (single bars):{int(bars_sold)}")
     print(f"Total Inventory Sold (bars):      {int(total_inventory_sold)}")
@@ -224,3 +233,4 @@ def build_weekly_summary(
 #     output_file = "weekly_summary.csv"
 
 #     build_weekly_summary(master_file, threepl_file, output_file)
+

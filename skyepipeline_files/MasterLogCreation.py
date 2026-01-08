@@ -42,16 +42,19 @@ PER_BAR_COGS = 39891.91 / 15848  # ≈ 2.517...
 def classify_shopify_item(price):
     """
     For Shopify rows:
-    box = line item price > 20
-    bar  = line item price < 5
+    case = 250 < line item price < 500
+    box = 20 < line item price < 100
+    bar  = line item price < 6.5
     otherwise None
     """
     try:
         p = float(price)
     except (TypeError, ValueError):
         return None
-    if p > 20:
+    if 20 < p < 100:
         return "box"
+    elif 250 < p < 500:
+        return "case"
     elif p < 6.5:
         return "bar"
     else:
@@ -85,11 +88,14 @@ def classify_sample_item(total_price, qty):
 def compute_bars_sold(item_type, qty):
     """
     7 bars per box.
+    168 bars per case.
     """
     if pd.isna(qty):
         return 0
     if item_type == "box":
         return qty * 7
+    elif item_type == "case":
+        return qty * 168
     elif item_type == "bar":
         return qty
     else:
@@ -131,7 +137,7 @@ def orders_log_from_csv(orders_file, output_path=None):
     - output_path: optional path to write the CSV output
 
     Returns a `pandas.DataFrame` with the same columns as the Shopify portion
-    of `build_master_log` (order_ID, order_date, email, box_or_bar, source,
+    of `build_master_log` (order_ID, order_date, email, box_or_bar_or_case, source,
     line_item_quantity, total_bars_sold, line_item_price, subtotal, discount,
     shipping, tax, total, bar_cogs, total_shipping_cost).
     """
@@ -139,6 +145,7 @@ def orders_log_from_csv(orders_file, output_path=None):
 
     shopify = orders.copy()
 
+    #below logic takes the shopify orders and classifies them into box/bar/case and computes bars sold
     shopify["line_item_quantity"] = pd.to_numeric(
         shopify.get("Lineitem quantity"), errors="coerce"
     )
@@ -146,13 +153,15 @@ def orders_log_from_csv(orders_file, output_path=None):
         shopify.get("Lineitem price"), errors="coerce"
     )
 
-    shopify["box_or_bar"] = shopify["line_item_price"].apply(classify_shopify_item)
+    shopify["box_or_bar_or_case"] = shopify["line_item_price"].apply(classify_shopify_item)
     shopify["total_bars_sold"] = shopify.apply(
-        lambda r: compute_bars_sold(r["box_or_bar"], r["line_item_quantity"]),
+        lambda r: compute_bars_sold(r["box_or_bar_or_case"], r["line_item_quantity"]),
         axis=1,
     )
+    
+    
     shopify["bar_cogs"] = shopify.apply(
-        lambda r: compute_bar_cogs(r["box_or_bar"], r["line_item_quantity"]),
+        lambda r: compute_bar_cogs(r["box_or_bar_or_case"], r["line_item_quantity"]),
         axis=1,
     )
 
@@ -162,7 +171,7 @@ def orders_log_from_csv(orders_file, output_path=None):
             "order_ID": shopify.get("Name"),
             "order_date": shopify.get("Paid at"),
             "email": shopify.get("Email"),
-            "box_or_bar": shopify["box_or_bar"],
+            "box_or_bar_or_case": shopify["box_or_bar_or_case"],
             "source": shopify.get("Source"),
             "line_item_quantity": shopify["line_item_quantity"],
             "total_bars_sold": shopify["total_bars_sold"],
@@ -247,12 +256,12 @@ def build_master_log(orders_path, threepl_path, output_path=None):
         merged["Lineitem price"], errors="coerce"
     )
 
-    merged["box_or_bar"] = merged["line_item_price"].apply(classify_shopify_item)
+    merged["box_or_bar_or_case"] = merged["line_item_price"].apply(classify_shopify_item)
     merged["total_bars_sold"] = merged.apply(
-        lambda r: compute_bars_sold(r["box_or_bar"], r["line_item_quantity"]), axis=1
+        lambda r: compute_bars_sold(r["box_or_bar_or_case"], r["line_item_quantity"]), axis=1
     )
     merged["bar_cogs"] = merged.apply(
-        lambda r: compute_bar_cogs(r["box_or_bar"], r["line_item_quantity"]), axis=1
+        lambda r: compute_bar_cogs(r["box_or_bar_or_case"], r["line_item_quantity"]), axis=1
     )
     merged["total_shipping_cost"] = merged.apply(compute_total_shipping, axis=1)
 
@@ -262,7 +271,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             "order_ID": merged["Name"],  # Shopify "Name"
             "order_date": merged["Paid at"],
             "email": merged["Email"],
-            "box_or_bar": merged["box_or_bar"],
+            "box_or_bar_or_case": merged["box_or_bar_or_case"],
             "source": merged["Source"],
             "line_item_quantity": merged["line_item_quantity"],
             "total_bars_sold": merged["total_bars_sold"],
@@ -292,12 +301,12 @@ def build_master_log(orders_path, threepl_path, output_path=None):
         / samples["line_item_quantity"]
     )
     # Treat all free samples as boxes (7 bars per box)
-    samples["box_or_bar"] = "box"
+    samples["box_or_bar_or_case"] = "box"
     samples["total_bars_sold"] = samples.apply(
-        lambda r: compute_bars_sold(r["box_or_bar"], r["line_item_quantity"]), axis=1
+        lambda r: compute_bars_sold(r["box_or_bar_or_case"], r["line_item_quantity"]), axis=1
     )
     samples["bar_cogs"] = samples.apply(
-        lambda r: compute_bar_cogs(r["box_or_bar"], r["line_item_quantity"]), axis=1
+        lambda r: compute_bar_cogs(r["box_or_bar_or_case"], r["line_item_quantity"]), axis=1
     )
     samples["total_shipping_cost"] = samples.apply(compute_total_shipping, axis=1)
 
@@ -320,7 +329,7 @@ def build_master_log(orders_path, threepl_path, output_path=None):
             "order_ID": samples["Order Code"],  # no Shopify order number
             "order_date": samples["Actual Shipment Date"],
             "email": "FREE SAMPLES",
-            "box_or_bar": samples["box_or_bar"],
+            "box_or_bar_or_case": samples["box_or_bar_or_case"],
             "source": "free_sample",
             "line_item_quantity": samples["line_item_quantity"],
             "total_bars_sold": samples["total_bars_sold"],
@@ -401,3 +410,11 @@ def build_master_log(orders_path, threepl_path, output_path=None):
 #         orders_file,
 #         output_path="/Users/samskanse/desktop/orders_only_log_11-21_to_11-28.xlsx",
 #     )
+
+# ---- MAIN PIPELINE WRAPPER TEST ----
+prices = [4.5, 6.0, 10, 30, 150, 300]
+for p in prices:
+    t = classify_shopify_item(p)
+    bars = compute_bars_sold(t, 1)
+    cogs = compute_bar_cogs(t, 1)
+    print(p, t, bars, cogs)

@@ -148,7 +148,8 @@ def build_weekly_workbook(
     # ======================================================
 
     starting_inventory = int(s.get("Starting_Inventory_Bars", 0) or 0)
-
+    
+    cases_sold = int(s.get("Cases_Sold_This_Week", 0) or 0)
     boxes_sold = int(s.get("Boxes_Sold_This_Week", 0) or 0)
     bars_sold = int(s.get("Bars_Sold_This_Week", 0) or 0)
     total_inventory_sold = int(s.get("Total_Inventory_Sold_Bars", 0) or 0)
@@ -191,7 +192,7 @@ def build_weekly_workbook(
     rows.append([escape_excel_formula("- COGS"), cogs_value])
     rows.append([
         escape_excel_formula("- Total 3PL Costs (shipping, receiving, payment processing fee)"),
-        total_3pl_value,
+        total_3pl_value, "For for next period processing fee, lookup in pdf invoice"
     ])
     rows.append([escape_excel_formula("------------------------------------------------------"), ""])
 
@@ -217,61 +218,60 @@ def build_weekly_workbook(
     rows.append([escape_excel_formula("======================================================"), "", ""])
     rows.append(["", "", ""])
 
-    rows.append([escape_excel_formula("Boxes Sold This Period"), boxes_sold, ""])
-
-    # Add explicit bars-per-box row and computed boxes->bars row
-    boxes_per_box = 7
-    rows.append([escape_excel_formula("* bars per box"), boxes_per_box, ""])
+    rows.append([escape_excel_formula("Cases Sold/Sent Out This Period"), cases_sold, ""])
+    rows.append([escape_excel_formula("Boxes Sold/Sent Out This Period"), boxes_sold, ""])
+    rows.append([escape_excel_formula("Single Bars Sold/Sent Out This Period"), bars_sold, ""])
+    
+    
     # separator (visual)
+    rows.append(["","",""])
     rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
 
-    # Derived total: boxes * bars_per_box
-    try:
-        derived_bars_from_summary = int(boxes_sold) * int(boxes_per_box)
-    except Exception:
-        derived_bars_from_summary = boxes_sold * boxes_per_box
 
-    # Compute boxes from master log (sum of line_item_quantity where classified as 'box')
-    try:
-        # base mask: rows classified as boxes
-        mask_box = master_df.get("box_or_bar") == "box"
+    # --- Concise double-check for cases, boxes, bars ---
+    def get_mask(item):
+        return (master_df.get("box_or_bar_or_case") == item)
 
-        # prepare columns safely (fallback to empty strings if column missing)
-        if "email" in master_df.columns:
-            email_col = master_df["email"].astype(str).str.strip().str.upper()
-        else:
-            email_col = pd.Series([""] * len(master_df), index=master_df.index)
-
-        if "source" in master_df.columns:
-            source_col = master_df["source"].astype(str).str.strip().str.lower()
-        else:
-            source_col = pd.Series([""] * len(master_df), index=master_df.index)
-
-        if "sources" in master_df.columns:
-            sources_col = master_df["sources"].astype(str).str.strip().str.lower()
-        else:
-            sources_col = pd.Series([""] * len(master_df), index=master_df.index)
-
-        # Exclude rows that have been marked as sent to sales team (not actually sold)
-        not_sent_to_sales = (
+    def not_sales_mask():
+        email_col = master_df["email"].astype(str).str.strip().str.upper() if "email" in master_df.columns else ""
+        source_col = master_df["source"].astype(str).str.strip().str.lower() if "source" in master_df.columns else ""
+        sources_col = master_df["sources"].astype(str).str.strip().str.lower() if "sources" in master_df.columns else ""
+        return (
             (email_col != "SENT TO SALES TEAM") & (source_col != "sales_team") & (sources_col != "sales_team")
         )
 
-        final_mask = mask_box & not_sent_to_sales
+    # Bars per unit
+    bars_per_case = 168
+    bars_per_box = 7
+    bars_per_single = 1
 
-        master_box_qty = pd.to_numeric(master_df.loc[final_mask, "line_item_quantity"], errors="coerce").sum(skipna=True)
-        master_box_qty = int(master_box_qty or 0)
-        master_derived_bars = master_box_qty * boxes_per_box
-    except Exception:
-        master_box_qty = 0
-        master_derived_bars = 0
+    # Master log counts
+    mask = not_sales_mask()
+    master_case_qty = int(pd.to_numeric(master_df.loc[get_mask("case") & mask, "line_item_quantity"], errors="coerce").sum(skipna=True) or 0)
+    master_box_qty = int(pd.to_numeric(master_df.loc[get_mask("box") & mask, "line_item_quantity"], errors="coerce").sum(skipna=True) or 0)
+    master_bar_qty = int(pd.to_numeric(master_df.loc[get_mask("bar") & mask, "line_item_quantity"], errors="coerce").sum(skipna=True) or 0)
 
-    note = ""
-    if master_derived_bars != derived_bars_from_summary:
-        note = f"Mismatch: master-derived bars={master_derived_bars}"
+    # Derived bars from master log
+    master_case_bars = master_case_qty * bars_per_case
+    master_box_bars = master_box_qty * bars_per_box
+    master_bar_bars = master_bar_qty * bars_per_single
 
-    rows.append([escape_excel_formula("Box Bars sold/sent out"), derived_bars_from_summary, note])
-    rows.append([escape_excel_formula("+ Single Bars Sold"), bars_sold, ""])
+    # Derived bars from summary
+    cases_sold_summary = int(s.get("Cases_Sold_This_Week", 0) or 0)
+    boxes_sold_summary = int(s.get("Boxes_Sold_This_Week", 0) or 0)
+    bars_sold_summary = int(s.get("Bars_Sold_This_Week", 0) or 0)
+    summary_case_bars = cases_sold_summary * bars_per_case
+    summary_box_bars = boxes_sold_summary * bars_per_box
+    summary_bar_bars = bars_sold_summary * bars_per_single
+
+    # Notes for mismatches
+    note_case = f"Mismatch: master-derived bars={master_case_bars}" if master_case_bars != summary_case_bars else ""
+    note_box = f"Mismatch: master-derived bars={master_box_bars}" if master_box_bars != summary_box_bars else ""
+    note_bar = f"Mismatch: master-derived bars={master_bar_bars}" if master_bar_bars != summary_bar_bars else ""
+
+    rows.append([escape_excel_formula("Case Bars Sold/Sent Out (case * 168 bars)"), summary_case_bars, note_case])
+    rows.append([escape_excel_formula("+ Box Bars Sold/Sent Out (box * 7 bars)"), summary_box_bars, note_box])
+    rows.append([escape_excel_formula("+ Single Bars Sold/Sent Out (single * 1 bar)"), summary_bar_bars, note_bar])
 
     # Add a row of dashes between single bars sold and total inventory sold
     rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
@@ -292,7 +292,7 @@ def build_weekly_workbook(
 
     rows.append([escape_excel_formula("- Total Inventory Sold (bars)"), total_inventory_sold_value, ""])
     rows.append([escape_excel_formula("------------------------------------------------------"), "", ""])
-    rows.append([escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory, ""])
+    rows.append([escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory, "Use this in next period Starting Inventory"])
 
 
     # Add a third column for optional notes/comments (e.g., mismatches)
@@ -349,12 +349,12 @@ def build_weekly_workbook(
         [escape_excel_formula("======================================================"), "", ""],
         ["", "", ""],
         [escape_excel_formula("Bars to be sold (POS)"), pos_bars_val, ""],
-        [escape_excel_formula("- Single Bars Sold"), bars_sold, ""],
+        [escape_excel_formula("- Single Bars Sold/Sent Out"), bars_sold, ""],
         [escape_excel_formula("------------------------------------------------------"), "", ""],
-        [escape_excel_formula("Bars outstanding (POS)"), bars_left_for_pos, ""],
+        [escape_excel_formula("Bars outstanding (POS)"), bars_left_for_pos, "Use this in next period POS bars"],
         [escape_excel_formula("======================================================"), "", ""],
         ["", "", ""],
-        [escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory, ""],
+        [escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory],
         [escape_excel_formula("- Bars outstanding (POS)"), -abs(bars_left_for_pos), ""],
         [escape_excel_formula("------------------------------------------------------"), "", ""],
         [escape_excel_formula("Bars left at 3PL"), bars_left_at_3pl, pos_note],

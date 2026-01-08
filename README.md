@@ -1,3 +1,7 @@
+# TODO
+- Make logic for unfufilled orders (as orders fufilled long after submitted will needed to be included on current order log with 3pl to create period report)
+
+
 # Skye-Financials-Automation
 
 Sales Automation Task:
