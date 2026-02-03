@@ -1,0 +1,12 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+
+# Virtual environments (if you use them)
+venv/
+.env/
+
+# OS junk
+.DS_Store
+Thumbs.db
