@@ -4,6 +4,9 @@
 # Will combine our weekly summaries from each period into one weekly summary
 # Will create a new excel file with the combined master log and weekly summary
 
+
+# WORK IN PROGRESS - NOT YET FUNCTIONAL
+
 import pandas as pd
 from skyepipeline_files.MasterLogCreation import build_master_log
 from skyepipeline_files.WeeklySummaryCreator import build_weekly_summary

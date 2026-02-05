@@ -59,6 +59,7 @@ def build_weekly_workbook(
     weekly_summary,
     output_path="Skye_Weekly_Report.xlsx",
     pos_bars=None,
+    tot_pos_bars=None,
 ):
     """
     Build an Excel workbook from `master` and `weekly_summary` which may be
@@ -328,7 +329,15 @@ def build_weekly_workbook(
     except Exception:
         pass
 
-    # Bars left for POS = pos_bars - single bars sold (per request)
+    
+    
+    # Bars sent total for POS = total sent to sales team + newly sent out gtm bars
+    try:
+        tot_for_pos = int(tot_pos_bars) + int(gtm_bars)
+    except Exception:
+        tot_pos_bars = 0
+    
+    # Bars left for POS = pos_bars - single bars sold (per request)  
     try:
         bars_left_for_pos = int(pos_bars_val) - int(bars_sold)
     except Exception:
@@ -348,6 +357,9 @@ def build_weekly_workbook(
     extra_rows = [
         [escape_excel_formula("======================================================"), "", ""],
         ["", "", ""],
+        [escape_excel_formula("=============== POS / Remaining Inventory ============"), "", ""],
+        [escape_excel_formula("Total POS Bars that were given to sales members"), tot_for_pos, "Use this for POS sent to sales members"],
+        ["" ,"" ,""],
         [escape_excel_formula("Bars to be sold (POS)"), pos_bars_val, ""],
         [escape_excel_formula("- Single Bars Sold/Sent Out"), bars_sold, ""],
         [escape_excel_formula("------------------------------------------------------"), "", ""],
@@ -355,7 +367,7 @@ def build_weekly_workbook(
         [escape_excel_formula("======================================================"), "", ""],
         ["", "", ""],
         [escape_excel_formula("Ending Inventory (bars)"), weekly_ending_inventory],
-        [escape_excel_formula("- Bars outstanding (POS)"), -abs(bars_left_for_pos), ""],
+        [escape_excel_formula("- Bars given out to Sales Members"), -abs(tot_for_pos), ""],
         [escape_excel_formula("------------------------------------------------------"), "", ""],
         [escape_excel_formula("Bars left at 3PL"), bars_left_at_3pl, pos_note],
     ]

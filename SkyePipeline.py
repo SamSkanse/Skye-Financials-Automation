@@ -4,6 +4,7 @@ import os
 import re
 from datetime import datetime
 import pandas as pd
+import sys
 from skyepipeline_files.MasterLogCreation import build_master_log
 from skyepipeline_files.WeeklySummaryCreator import build_weekly_summary, get_float_input, get_int_input
 from skyepipeline_files.BuildWeeklyWorkbook import build_weekly_workbook
@@ -33,6 +34,7 @@ def get_period_inputs_ui(defaults=None):
 
     defaults = defaults or {}
     result = {}
+    cancelled = {"flag": False}
 
     root = tk.Tk()
     root.title("Period Inputs")
@@ -44,26 +46,37 @@ def get_period_inputs_ui(defaults=None):
     tk.Label(root, text="Payment processing fee ($):").grid(row=1, column=0, sticky="e", padx=6, pady=6)
     fee_var = tk.StringVar(value=str(defaults.get("payment_processing_fee", "")))
     tk.Entry(root, textvariable=fee_var).grid(row=1, column=1, padx=6, pady=6)
+    
+    tk.Label(root, text="Total POS Bars given to sales members:").grid(row=2, column=0, sticky="e", padx=6, pady=6)
+    tot_pos_var = tk.StringVar(value=str(defaults.get("tot_pos_bars", "")))
+    tk.Entry(root, textvariable=tot_pos_var).grid(row=2, column=1, padx=6, pady=6)
 
-    tk.Label(root, text="Bars to be sold (POS):").grid(row=2, column=0, sticky="e", padx=6, pady=6)
+    tk.Label(root, text="Bars to be sold (POS):").grid(row=3, column=0, sticky="e", padx=6, pady=6)
     pos_var = tk.StringVar(value=str(defaults.get("pos_bars", "")))
-    tk.Entry(root, textvariable=pos_var).grid(row=2, column=1, padx=6, pady=6)
+    tk.Entry(root, textvariable=pos_var).grid(row=3, column=1, padx=6, pady=6)
 
     def on_ok():
         result["starting_inventory"] = start_var.get().strip()
         result["payment_processing_fee"] = fee_var.get().strip()
+        result["tot_pos_bars"] = tot_pos_var.get().strip()
         result["pos_bars"] = pos_var.get().strip()
         root.destroy()
 
     def on_cancel():
+        # mark cancellation so caller can exit cleanly
         result.clear()
+        cancelled["flag"] = True
         root.destroy()
 
-    tk.Button(root, text="OK", command=on_ok).grid(row=3, column=0, pady=8)
-    tk.Button(root, text="Cancel", command=on_cancel).grid(row=3, column=1, pady=8)
+    tk.Button(root, text="OK", command=on_ok).grid(row=4, column=0, pady=8)
+    tk.Button(root, text="Cancel", command=on_cancel).grid(row=4, column=1, pady=8)
 
     root.resizable(False, False)
     root.mainloop()
+
+    # If the user cancelled/closed the window, return None so caller can exit
+    if cancelled["flag"]:
+        return None
 
     # Parse and coerce values with safe fallbacks
     try:
@@ -74,12 +87,16 @@ def get_period_inputs_ui(defaults=None):
         ppf = float(result.get("payment_processing_fee", 0)) if result.get("payment_processing_fee", "") != "" else None
     except Exception:
         ppf = None
+    try:        
+        tot_pos_bars = int(float(result.get("tot_pos_bars", 0))) if result.get("tot_pos_bars", "") != "" else None
+    except Exception:
+        tot_pos_bars = None
     try:
         posv = int(float(result.get("pos_bars", 0))) if result.get("pos_bars", "") != "" else None
     except Exception:
         posv = None
 
-    return {"starting_inventory": si, "payment_processing_fee": ppf, "pos_bars": posv}
+    return {"starting_inventory": si, "payment_processing_fee": ppf, "tot_pos_bars": tot_pos_bars, "pos_bars": posv}
 
 """
 SkyePipeline.py
@@ -113,15 +130,19 @@ def main():
     # ---- input files (auto-open file pickers) ----
     orders_file = pick_file(title="Select Shopify Orders CSV", filetypes=[('CSV files', '*.csv'), ('All files', '*.*')])
     if not orders_file:
-        raise FileNotFoundError("Orders file path not provided.")
+        print("No orders file selected. Exiting.")
+        sys.exit(0)
     if not os.path.isfile(orders_file):
-        raise FileNotFoundError(f"Orders file not found: {orders_file}")
+        print(f"Orders file not found: {orders_file}")
+        sys.exit(1)
 
     threepl_file = pick_file(title="Select 3PL Excel file", filetypes=[('Excel files', ('*.xlsx', '*.xls')), ('All files', '*.*')])
     if not threepl_file:
-        raise FileNotFoundError("3PL file path not provided.")
+        print("No 3PL file selected. Exiting.")
+        sys.exit(0)
     if not os.path.isfile(threepl_file):
-        raise FileNotFoundError(f"3PL file not found: {threepl_file}")
+        print(f"3PL file not found: {threepl_file}")
+        sys.exit(1)
 
     
     # Try to infer start/end from filename like: '... 11.17.25 to 11.23.25.xlsx'
@@ -163,9 +184,11 @@ def main():
     # --- final report output (auto-open directory picker) ----
     output_dir = pick_directory(title="Select output folder for report")
     if not output_dir:
-        raise FileNotFoundError("Output folder not provided.")
+        print("No output folder selected. Exiting.")
+        sys.exit(0)
     if not os.path.isdir(output_dir):
-        raise FileNotFoundError(f"Output folder not found: {output_dir}")
+        print(f"Output folder not found: {output_dir}")
+        sys.exit(1)
     # (No Finder reveal calls — selection will not be opened automatically)
 
     if start_date is not None and end_date is not None:
@@ -175,6 +198,9 @@ def main():
 
     # ---- financial inputs (small UI) ----
     ui_vals = get_period_inputs_ui()
+    if ui_vals is None:
+        print("Period inputs dialog was cancelled. Exiting.")
+        sys.exit(0)
     if ui_vals.get("payment_processing_fee") is None:
         payment_processing_fee = get_float_input(
             "Enter payment processing fee for the period (e.g. 123.45): ", decimals=2
@@ -191,6 +217,7 @@ def main():
 
     # POS bars value (may be used by BuildWeeklyWorkbook)
     pos_bars_val_from_ui = ui_vals.get("pos_bars")
+    total_sales_team_pos_bars_from_ui = ui_vals.get("tot_pos_bars")
 
     # ---- STEP 1: build master log (returns DataFrame) ----
     print("\n[1/3] Building master log (in-memory)...")
@@ -213,6 +240,7 @@ def main():
         summary_df,
         output_path=report_output,
         pos_bars=pos_bars_val_from_ui,
+        tot_pos_bars=total_sales_team_pos_bars_from_ui,
     )
 
     print(f"\n✅ Done! Final report written to: {os.path.abspath(report_output)}")
