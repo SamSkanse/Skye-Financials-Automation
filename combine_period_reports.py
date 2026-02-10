@@ -134,13 +134,24 @@ def combine_master_logs(report_files, output_path=None, dedupe=False, primary_ke
 	if dedupe and primary_key is not None:
 		combined = combined.drop_duplicates(subset=primary_key, keep="first")
 
-	# Remove unnecessary columns
-	cols_to_remove = ["exclude_from_bars_sold", "box_or_bar_or_case"]
-	for col in cols_to_remove:
-		# Case-insensitive column removal
-		matching_cols = [c for c in combined.columns if str(c).strip().lower() == col.lower()]
-		if matching_cols:
-			combined = combined.drop(columns=matching_cols)
+	# Remove exclude_from_bars_sold column
+	exclude_col = "exclude_from_bars_sold"
+	matching_cols = [c for c in combined.columns if str(c).strip().lower() == exclude_col.lower()]
+	if matching_cols:
+		combined = combined.drop(columns=matching_cols)
+	
+	# Combine box_or_bar and box_or_bar_or_case columns
+	box_or_bar_cols = [c for c in combined.columns if str(c).strip().lower() == "box_or_bar"]
+	box_or_bar_or_case_cols = [c for c in combined.columns if str(c).strip().lower() == "box_or_bar_or_case"]
+	
+	if box_or_bar_cols and box_or_bar_or_case_cols:
+		# Both columns exist - combine them (prefer box_or_bar_or_case, fallback to box_or_bar)
+		combined[box_or_bar_or_case_cols[0]] = combined[box_or_bar_or_case_cols[0]].fillna(combined[box_or_bar_cols[0]])
+		combined = combined.drop(columns=box_or_bar_cols)
+	elif box_or_bar_cols and not box_or_bar_or_case_cols:
+		# Only box_or_bar exists - rename it to box_or_bar_or_case
+		combined = combined.rename(columns={box_or_bar_cols[0]: "box_or_bar_or_case"})
+	# If only box_or_bar_or_case exists, keep it as is
 
 	return combined
 
