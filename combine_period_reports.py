@@ -137,7 +137,7 @@ def combine_master_logs(report_files, output_path=None, dedupe=False, primary_ke
 	return combined
 
 
-def combine_weekly_summaries(report_files):
+def combine_financial_summaries(report_files):
 	"""Extract cumulative period financials from each report's Financial Summary sheet.
 
 	Returns a DataFrame with one row per report and columns:
@@ -663,7 +663,7 @@ def combine_period_reports(report_files, output_path):
 	
 	# ---- COMBINE FINANCIAL SUMMARIES ----
 	print("\n2. Combining Financial Summaries...")
-	fin_result = combine_weekly_summaries(report_files)
+	fin_result = combine_financial_summaries(report_files)
 	if fin_result is None:
 		print("Warning: No financial summaries found. Continuing with other sections.")
 		fin_summary = pd.DataFrame()
