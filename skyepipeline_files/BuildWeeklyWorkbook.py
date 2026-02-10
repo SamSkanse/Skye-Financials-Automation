@@ -345,7 +345,7 @@ def build_weekly_workbook(
 
     # Bars left at 3PL = ending inventory - bars_left_for_pos
     try:
-        bars_left_at_3pl = int(weekly_ending_inventory) - int(bars_left_for_pos)
+        bars_left_at_3pl = int(weekly_ending_inventory) - int(tot_for_pos)
     except Exception:
         bars_left_at_3pl = 0
 

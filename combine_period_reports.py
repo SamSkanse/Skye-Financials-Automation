@@ -134,6 +134,14 @@ def combine_master_logs(report_files, output_path=None, dedupe=False, primary_ke
 	if dedupe and primary_key is not None:
 		combined = combined.drop_duplicates(subset=primary_key, keep="first")
 
+	# Remove unnecessary columns
+	cols_to_remove = ["exclude_from_bars_sold", "box_or_bar_or_case"]
+	for col in cols_to_remove:
+		# Case-insensitive column removal
+		matching_cols = [c for c in combined.columns if str(c).strip().lower() == col.lower()]
+		if matching_cols:
+			combined = combined.drop(columns=matching_cols)
+
 	return combined
 
 
@@ -627,11 +635,217 @@ def combine_pos_summary(report_files):
 	if not report_files:
 		raise ValueError("report_files must be a non-empty iterable of file paths")
 	
-	# TODO: Extract POS/remaining inventory metrics from Financial Summary sheets
-	# TODO: Aggregate totals across all provided files
-	# TODO: Build formatted rows for POS section
-	# TODO: Return DataFrame with POS rows
-	pass
+	# Store POS data with period dates for sorting
+	pos_data = []
+	
+	for f in report_files:
+		p = Path(f)
+		if not p.exists():
+			continue
+		
+		try:
+			xls = pd.ExcelFile(p)
+		except Exception:
+			continue
+		
+		# Find Financial Summary sheet
+		candidate_sheet = None
+		for s in xls.sheet_names:
+			s_norm = str(s).strip().lower()
+			if s_norm == "financial summary" or ("financial" in s_norm and "summary" in s_norm):
+				candidate_sheet = s
+				break
+		
+		if candidate_sheet is None:
+			continue
+		
+		try:
+			df = pd.read_excel(p, sheet_name=candidate_sheet)
+		except Exception:
+			continue
+		
+		# Normalize columns
+		df.columns = [str(c).strip() for c in df.columns]
+		
+		# Find metric and value columns
+		metric_col = df.columns[0] if len(df.columns) > 0 else None
+		value_col = df.columns[1] if len(df.columns) > 1 else None
+		
+		if metric_col is None or value_col is None:
+			continue
+		
+		# Helper to parse numeric values
+		def parse_num(v):
+			if pd.isna(v):
+				return np.nan
+			if isinstance(v, (int, float, np.number)):
+				return float(v)
+			s = str(v).strip()
+			if s == '':
+				return np.nan
+			# Handle negatives in parentheses
+			neg = False
+			if s.startswith('(') and s.endswith(')'):
+				neg = True
+				s = s.strip('()')
+			s = s.replace('$','').replace(',','').replace('\xa0','').strip()
+			try:
+				v = float(s)
+				return -v if neg else v
+			except Exception:
+				return np.nan
+		
+		# Build mapping
+		metric_series = df[metric_col].astype(str).fillna('').tolist()
+		value_series = df[value_col].tolist()
+		mapping = {}
+		for mtxt, v in zip(metric_series, value_series):
+			mt = str(mtxt).strip()
+			mt_clean = re.sub(r"^[\+\-]\s*", "", mt).strip().lower()
+			mapping[mt_clean] = parse_num(v)
+		
+		# Helper to find metrics by keywords
+		def find_metric(*keywords):
+			for k, val in mapping.items():
+				if all(kw in k for kw in keywords):
+					return val
+			return np.nan
+		
+		# Extract POS metrics
+		total_pos_bars = find_metric('total pos bars', 'sales members')
+		if pd.isna(total_pos_bars):
+			total_pos_bars = find_metric('total pos bars')
+		
+		single_bars_sold = find_metric('single bars sold')
+		if pd.isna(single_bars_sold):
+			single_bars_sold = find_metric('bars sold', 'single')
+		
+		bars_outstanding = find_metric('bars outstanding')
+		if pd.isna(bars_outstanding):
+			bars_outstanding = find_metric('outstanding', 'pos')
+		
+		ending_inventory = find_metric('ending inventory')
+		bars_left_3pl = find_metric('bars left at 3pl')
+		if pd.isna(bars_left_3pl):
+			bars_left_3pl = find_metric('bars left', '3pl')
+		
+		# Extract period date for sorting (earliest to latest)
+		period_date = None
+		date_token = None
+		for hay in (candidate_sheet, p.name):
+			if not hay:
+				continue
+			m = re.search(r"(\d{4}-\d{2}-\d{2})\s*_?to\s*_?(\d{4}-\d{2}-\d{2})", str(hay), re.IGNORECASE)
+			if m:
+				date_token = (m.group(1), m.group(2))
+				break
+		
+		if date_token:
+			try:
+				start_dt = datetime.strptime(date_token[0], "%Y-%m-%d")
+				period_date = start_dt
+			except Exception:
+				period_date = None
+		
+		pos_data.append({
+			'period_date': period_date,
+			'total_pos_bars': total_pos_bars,
+			'single_bars_sold': single_bars_sold,
+			'bars_outstanding': bars_outstanding,
+			'ending_inventory': ending_inventory,
+			'bars_left_3pl': bars_left_3pl,
+		})
+	
+	if not pos_data:
+		print("No POS summaries found in any provided files.")
+		return None
+	
+	# Sort by period_date to get earliest first, latest last
+	pos_data.sort(key=lambda x: x['period_date'] if x['period_date'] else datetime.max)
+	
+	# Most recent values (from latest period)
+	latest = pos_data[-1]
+	total_pos_bars_given = 0
+	if not pd.isna(latest['total_pos_bars']):
+		total_pos_bars_given = int(latest['total_pos_bars'])
+	
+	bars_outstanding_latest = 0
+	if not pd.isna(latest['bars_outstanding']):
+		bars_outstanding_latest = int(latest['bars_outstanding'])
+	
+	ending_inventory_latest = 0
+	if not pd.isna(latest['ending_inventory']):
+		ending_inventory_latest = int(latest['ending_inventory'])
+	
+	bars_left_3pl_latest = 0
+	if not pd.isna(latest['bars_left_3pl']):
+		bars_left_3pl_latest = int(latest['bars_left_3pl'])
+	
+	# Sum single bars sold across all periods
+	total_single_bars_sold = 0
+	for item in pos_data:
+		if not pd.isna(item['single_bars_sold']):
+			total_single_bars_sold += int(item['single_bars_sold'])
+	
+	# ======================================================
+	#           VALIDATION CHECKS
+	# ======================================================
+	
+	# Check 1: Total bars given - single bars sold should equal remaining POS bars
+	calculated_pos_remaining = total_pos_bars_given - total_single_bars_sold
+	pos_balance_match = abs(calculated_pos_remaining - bars_outstanding_latest) < 1  # Allow 1 bar tolerance
+	pos_balance_note = ""
+	if not pos_balance_match:
+		pos_balance_note = f"WARNING: POS balance mismatch! Given({total_pos_bars_given}) - Sold({total_single_bars_sold}) = {calculated_pos_remaining}, but Remaining={bars_outstanding_latest}, Diff={calculated_pos_remaining - bars_outstanding_latest}"
+		print(f"⚠️  {pos_balance_note}")
+	
+	# Check 2: Ending inventory - bars given to sales team should equal bars left at 3PL
+	calculated_3pl_bars = ending_inventory_latest - total_pos_bars_given
+	warehouse_match = abs(calculated_3pl_bars - bars_left_3pl_latest) < 1  # Allow 1 bar tolerance
+	warehouse_note = ""
+	if not warehouse_match:
+		warehouse_note = f"WARNING: Warehouse balance mismatch! Ending({ending_inventory_latest}) - Given({total_pos_bars_given}) = {calculated_3pl_bars}, but 3PL={bars_left_3pl_latest}, Diff={calculated_3pl_bars - bars_left_3pl_latest}"
+		print(f"⚠️  {warehouse_note}")
+	
+	# Build formatted rows similar to BuildWeeklyWorkbook
+	rows = []
+	rows.append(["", "", ""])
+	rows.append(["=============== POS / Sales Team Inventory ============", "", ""])
+	rows.append(["POS Bars Sent to Sales Team", total_pos_bars_given, "Cumulative total"])
+	rows.append(["Single Bars Sold by Sales Team", total_single_bars_sold, "Cumulative total"])
+	rows.append(["------------------------------------------------------", "", ""])
+	rows.append(["POS Bars Remaining", bars_outstanding_latest, pos_balance_note])
+	rows.append(["", "", ""])
+	rows.append(["", "", ""])
+	rows.append(["=============== Warehouse Inventory ====================", "", ""])
+	rows.append(["Ending Inventory (bars)", ending_inventory_latest, ""])
+	
+	# Show total POS bars given as subtractive
+	try:
+		total_pos_bars_value = -abs(int(total_pos_bars_given))
+	except Exception:
+		total_pos_bars_value = -abs(total_pos_bars_given)
+	
+	rows.append(["- POS Bars Sent to Sales Team", total_pos_bars_value, ""])
+	rows.append(["------------------------------------------------------", "", ""])
+	
+	# Combine negative bars warning with warehouse mismatch warning
+	pos_note = ""
+	if bars_left_3pl_latest < 0:
+		pos_note = f"WARNING: Negative bars at 3PL: {bars_left_3pl_latest}"
+		print(f"⚠️  {pos_note}")
+	
+	# If there's both a warehouse note and a negative note, combine them
+	final_3pl_note = warehouse_note
+	if pos_note and warehouse_note:
+		final_3pl_note = f"{warehouse_note} | {pos_note}"
+	elif pos_note:
+		final_3pl_note = pos_note
+	
+	rows.append(["Bars Remaining at 3PL", bars_left_3pl_latest, final_3pl_note])
+	
+	summary = pd.DataFrame(rows, columns=["Metric", "Value", "Note"])
+	return summary
 
 
 def combine_period_reports(report_files, output_path):
@@ -728,6 +942,40 @@ def combine_period_reports(report_files, output_path):
 					summary_escaped['Note'] = summary_escaped['Note'].apply(_escape_cell)
 				summary_escaped.to_excel(writer, sheet_name="Financial Summary", index=False)
 				print(f"   ✓ Financial Summary sheet written ({len(combined_summary)} rows)")
+				
+				# Apply accounting format to numeric cells in Value column (column B)
+				# BUT ONLY for the Financial Summary section (not Inventory or POS sections)
+				wb = writer.book
+				ws = wb["Financial Summary"]
+				accounting_format = '_($* #,##0.00_);_($* (#,##0.00);_($* "-"_);_(@_)'
+				percentage_format = '0.00%'
+				
+				# Find the Value column (should be column B, index 2)
+				value_col_idx = None
+				metric_col_idx = None
+				for idx, col in enumerate(ws[1], start=1):
+					if col.value == "Value":
+						value_col_idx = idx
+					if col.value == "Metric":
+						metric_col_idx = idx
+				
+				if value_col_idx and metric_col_idx:
+					# Only apply to Financial Summary rows (first section)
+					# Row 1 is header, financial summary starts at row 2
+					fin_summary_end_row = 1 + len(fin_summary) if not fin_summary.empty else 1
+					
+					# Apply accounting format only to financial summary rows (except Gross Margin)
+					for row in range(2, fin_summary_end_row + 1):
+						metric_cell = ws.cell(row=row, column=metric_col_idx)
+						value_cell = ws.cell(row=row, column=value_col_idx)
+						
+						# Only apply format if cell contains a number
+						if isinstance(value_cell.value, (int, float, np.number)) and not pd.isna(value_cell.value):
+							# Check if this is the Gross Margin row
+							if metric_cell.value and 'gross margin' in str(metric_cell.value).lower():
+								value_cell.number_format = percentage_format
+							else:
+								value_cell.number_format = accounting_format
 			
 			# Auto-size columns
 			wb = writer.book
@@ -776,31 +1024,126 @@ if __name__ == "__main__":
 
 	print(f"Output folder: {output_dir}")
 
-	# --- Test: combine inventory summaries and write to Excel in the chosen output folder ---
-	print("\nCombining Inventory Summary sheets from selected files...")
-	inv_result = combine_inventory_summaries(chosen)
-	if inv_result is None:
-		print("No inventory summaries were combined. Exiting.")
-		sys.exit(0)
+	# Menu for testing options
+	print("\n" + "="*60)
+	print("Select test option:")
+	print("1. Test Master Log")
+	print("2. Test Financial Summary")
+	print("3. Test Inventory Summary")
+	print("4. Test POS Summary")
+	print("5. Test Full Combined Report (all sections)")
+	print("="*60)
+	
+	choice = input("Enter choice (1-5): ").strip()
 
-	out_file = Path(output_dir) / "combined_inventory_summary.xlsx"
-	try:
-		with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
-			# Escape leading characters that Excel may interpret as formulas
-			summary_escaped = inv_result.copy()
-			def _escape_cell(val):
-				if isinstance(val, str) and val and val[0] in ('=', '+', '-'):
-					return "'" + val
-				return val
-			# Escape Metric and Note columns if present
-			if 'Metric' in summary_escaped.columns:
-				summary_escaped['Metric'] = summary_escaped['Metric'].apply(_escape_cell)
-			if 'Note' in summary_escaped.columns:
-				summary_escaped['Note'] = summary_escaped['Note'].apply(_escape_cell)
-			# write inventory summary
-			summary_escaped.to_excel(writer, sheet_name="Inventory Summary", index=False)
-		print(f"Combined inventory summary written to: {out_file}")
-	except Exception as e:
-		print(f"Failed to write combined inventory summary to {out_file}: {e}")
-		print("You can still inspect 'inv_result' if running interactively.")
+	if choice == "1":
+		# --- Test: combine master logs ---
+		print("\nCombining Master Log sheets from selected files...")
+		master_result = combine_master_logs(chosen)
+		if master_result is None:
+			print("No master logs were combined. Exiting.")
+			sys.exit(0)
+
+		out_file = Path(output_dir) / "combined_master_log.xlsx"
+		try:
+			with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+				master_result.to_excel(writer, sheet_name="Master Log", index=False)
+			print(f"Combined master log written to: {out_file}")
+		except Exception as e:
+			print(f"Failed to write combined master log to {out_file}: {e}")
+			print("You can still inspect 'master_result' if running interactively.")
+
+	elif choice == "2":
+		# --- Test: combine financial summaries ---
+		print("\nCombining Financial Summary sheets from selected files...")
+		fin_result = combine_financial_summaries(chosen)
+		if fin_result is None:
+			print("No financial summaries were combined. Exiting.")
+			sys.exit(0)
+
+		_, fin_summary = fin_result
+		out_file = Path(output_dir) / "combined_financial_summary.xlsx"
+		try:
+			with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+				summary_escaped = fin_summary.copy()
+				def _escape_cell(val):
+					if isinstance(val, str) and val and val[0] in ('=', '+', '-'):
+						return "'" + val
+					return val
+				if 'Metric' in summary_escaped.columns:
+					summary_escaped['Metric'] = summary_escaped['Metric'].apply(_escape_cell)
+				if 'Note' in summary_escaped.columns:
+					summary_escaped['Note'] = summary_escaped['Note'].apply(_escape_cell)
+				summary_escaped.to_excel(writer, sheet_name="Financial Summary", index=False)
+			print(f"Combined financial summary written to: {out_file}")
+		except Exception as e:
+			print(f"Failed to write combined financial summary to {out_file}: {e}")
+			print("You can still inspect 'fin_summary' if running interactively.")
+
+	elif choice == "3":
+		# --- Test: combine inventory summaries ---
+		print("\nCombining Inventory Summary sheets from selected files...")
+		inv_result = combine_inventory_summaries(chosen)
+		if inv_result is None:
+			print("No inventory summaries were combined. Exiting.")
+			sys.exit(0)
+
+		out_file = Path(output_dir) / "combined_inventory_summary.xlsx"
+		try:
+			with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+				summary_escaped = inv_result.copy()
+				def _escape_cell(val):
+					if isinstance(val, str) and val and val[0] in ('=', '+', '-'):
+						return "'" + val
+					return val
+				if 'Metric' in summary_escaped.columns:
+					summary_escaped['Metric'] = summary_escaped['Metric'].apply(_escape_cell)
+				if 'Note' in summary_escaped.columns:
+					summary_escaped['Note'] = summary_escaped['Note'].apply(_escape_cell)
+				summary_escaped.to_excel(writer, sheet_name="Inventory Summary", index=False)
+			print(f"Combined inventory summary written to: {out_file}")
+		except Exception as e:
+			print(f"Failed to write combined inventory summary to {out_file}: {e}")
+			print("You can still inspect 'inv_result' if running interactively.")
+
+	elif choice == "4":
+		# --- Test: combine POS summaries ---
+		print("\nCombining POS Summary sheets from selected files...")
+		pos_result = combine_pos_summary(chosen)
+		if pos_result is None:
+			print("No POS summaries were combined. Exiting.")
+			sys.exit(0)
+
+		out_file = Path(output_dir) / "combined_pos_summary.xlsx"
+		try:
+			with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+				summary_escaped = pos_result.copy()
+				def _escape_cell(val):
+					if isinstance(val, str) and val and val[0] in ('=', '+', '-'):
+						return "'" + val
+					return val
+				if 'Metric' in summary_escaped.columns:
+					summary_escaped['Metric'] = summary_escaped['Metric'].apply(_escape_cell)
+				if 'Note' in summary_escaped.columns:
+					summary_escaped['Note'] = summary_escaped['Note'].apply(_escape_cell)
+				summary_escaped.to_excel(writer, sheet_name="POS Summary", index=False)
+			print(f"Combined POS summary written to: {out_file}")
+		except Exception as e:
+			print(f"Failed to write combined POS summary to {out_file}: {e}")
+			print("You can still inspect 'pos_result' if running interactively.")
+
+	elif choice == "5":
+		# --- Test: full combined report ---
+		print("\nCombining full period report (all sections)...")
+		out_file = Path(output_dir) / "combined_period_report.xlsx"
+		success = combine_period_reports(chosen, out_file)
+		if success:
+			print(f"\nFull combined report successfully created: {out_file}")
+		else:
+			print("\nFailed to create full combined report.")
+			sys.exit(1)
+
+	else:
+		print(f"\nInvalid choice: {choice}. Please run again and select 1-5.")
+		sys.exit(1)
 
